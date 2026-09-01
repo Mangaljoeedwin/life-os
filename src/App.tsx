@@ -111,9 +111,9 @@ export function App() {
   const [tab, setTab] = useState<Tab>('today');
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (showLoadingScreen = false) => {
     if (!supabase || !session?.user.id) return;
-    setLoading(true);
+    if (showLoadingScreen) setLoading(true);
     const [tasks, completions, projects, weights, sessions, settings, corosMetrics, corosActivities] = await Promise.all([
       supabase.from('tasks').select('*').order('sort_order'),
       supabase.from('daily_completions').select('*').order('completion_date', { ascending: false }),
@@ -139,8 +139,10 @@ export function App() {
         settings: settings.data,
       });
     }
-    setLoading(false);
+    if (showLoadingScreen) setLoading(false);
   }, [session?.user.id]);
+
+  const refreshData = useCallback(() => { void loadData(); }, [loadData]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -149,22 +151,22 @@ export function App() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  useEffect(() => { if (session) void loadData(); }, [session, loadData]);
+  useEffect(() => { if (session) void loadData(true); }, [session, loadData]);
 
   useEffect(() => {
     if (!supabase || !session) return;
     const client = supabase;
     const channel = client.channel(`life-os-${session.user.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `user_id=eq.${session.user.id}` }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_completions', filter: `user_id=eq.${session.user.id}` }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'projects', filter: `user_id=eq.${session.user.id}` }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'weight_entries', filter: `user_id=eq.${session.user.id}` }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'focus_sessions', filter: `user_id=eq.${session.user.id}` }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'coros_daily_metrics', filter: `user_id=eq.${session.user.id}` }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'coros_activities', filter: `user_id=eq.${session.user.id}` }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `user_id=eq.${session.user.id}` }, refreshData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_completions', filter: `user_id=eq.${session.user.id}` }, refreshData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'projects', filter: `user_id=eq.${session.user.id}` }, refreshData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'weight_entries', filter: `user_id=eq.${session.user.id}` }, refreshData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'focus_sessions', filter: `user_id=eq.${session.user.id}` }, refreshData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'coros_daily_metrics', filter: `user_id=eq.${session.user.id}` }, refreshData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'coros_activities', filter: `user_id=eq.${session.user.id}` }, refreshData)
       .subscribe();
     return () => { void client.removeChannel(channel); };
-  }, [session, loadData]);
+  }, [session, refreshData]);
 
   const userId = session?.user.id ?? 'demo-user';
   const day = todayIn(data.settings.timezone);
