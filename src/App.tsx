@@ -3,6 +3,8 @@ import type { Session } from '@supabase/supabase-js';
 import {
   Archive,
   Activity,
+  ArrowDown,
+  ArrowUp,
   BarChart3,
   BriefcaseBusiness,
   Check,
@@ -12,6 +14,7 @@ import {
   Dumbbell,
   FolderKanban,
   Flame,
+  GripVertical,
   HeartPulse,
   Home,
   LogOut,
@@ -50,6 +53,13 @@ const prettyToday = (timeZone: string) => new Intl.DateTimeFormat('en-IN', {
   weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone,
 }).format(new Date());
 const uid = () => crypto.randomUUID();
+const greetingTemplates = [
+  (name: string) => `How are we doing today${name ? `, ${name}` : ''}?`,
+  (name: string) => `Welcome back${name ? `, ${name}` : ''}. What matters today?`,
+  (name: string) => `What deserves your attention today${name ? `, ${name}` : ''}?`,
+  (name: string) => `Ready for the next right thing${name ? `, ${name}` : ''}?`,
+  (name: string) => name ? `${name}, what would make today count?` : 'What would make today count?',
+];
 
 function AuthScreen() {
   const [name, setName] = useState('');
@@ -110,6 +120,7 @@ export function App() {
   const [error, setError] = useState('');
   const [tab, setTab] = useState<Tab>('today');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [greetingIndex, setGreetingIndex] = useState(() => Math.floor(Math.random() * greetingTemplates.length));
 
   const loadData = useCallback(async (showLoadingScreen = false) => {
     if (!supabase || !session?.user.id) return;
@@ -147,7 +158,11 @@ export function App() {
   useEffect(() => {
     if (!supabase) return;
     void supabase.auth.getSession().then(({ data: auth }) => { setSession(auth.session); setAuthReady(true); });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => { setSession(next); setAuthReady(true); });
+    const { data: listener } = supabase.auth.onAuthStateChange((event, next) => {
+      if (event === 'SIGNED_IN') setGreetingIndex((current) => (current + 1) % greetingTemplates.length);
+      setSession(next);
+      setAuthReady(true);
+    });
     return () => listener.subscription.unsubscribe();
   }, []);
 
@@ -210,6 +225,33 @@ export function App() {
     }
   }
 
+  async function reorderTask(taskId: string, orderedTaskIds: string[], direction: -1 | 1) {
+    const index = orderedTaskIds.indexOf(taskId);
+    const siblingId = orderedTaskIds[index + direction];
+    if (index < 0 || !siblingId) return;
+    const task = data.tasks.find((item) => item.id === taskId);
+    const sibling = data.tasks.find((item) => item.id === siblingId);
+    if (!task || !sibling) return;
+
+    const nextTask = { ...task, sort_order: sibling.sort_order };
+    const nextSibling = { ...sibling, sort_order: task.sort_order };
+    setData((current) => ({
+      ...current,
+      tasks: current.tasks
+        .map((item) => item.id === taskId ? nextTask : item.id === siblingId ? nextSibling : item)
+        .sort((a, b) => a.sort_order - b.sort_order),
+    }));
+
+    if (supabase) {
+      const [taskResult, siblingResult] = await Promise.all([
+        supabase.from('tasks').update({ sort_order: nextTask.sort_order }).eq('id', taskId),
+        supabase.from('tasks').update({ sort_order: nextSibling.sort_order }).eq('id', siblingId),
+      ]);
+      const saveError = taskResult.error ?? siblingResult.error;
+      if (saveError) { setError(saveError.message); void loadData(); }
+    }
+  }
+
   async function addWeight(weight: number) {
     const existing = data.weights.find((entry) => entry.entry_date === day);
     const entry: WeightEntry = { id: existing?.id ?? uid(), user_id: userId, entry_date: day, weight_kg: weight, source: 'manual', created_at: existing?.created_at ?? new Date().toISOString() };
@@ -249,7 +291,8 @@ export function App() {
   if (hasSupabaseConfig && !session) return <AuthScreen />;
   if (loading) return <LoadingScreen />;
 
-  const shared = { data, day, toggleTask, addTask, addWeight, addFocus };
+  const displayName = data.settings.display_name ?? '';
+  const shared = { data, day, toggleTask, addTask, reorderTask, addWeight, addFocus };
   const needsName = Boolean(session && !session.user.user_metadata?.display_name);
   return (
     <div className="app-shell">
@@ -274,7 +317,7 @@ export function App() {
       <main className="main-content">
         {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError('')}><X size={16} /></button></div>}
         {!hasSupabaseConfig && <div className="setup-banner"><Cloud size={18} /><span>You’re viewing a fully interactive preview. Add your Supabase credentials to turn on private cross-device sync.</span></div>}
-        {tab === 'today' && <TodayView {...shared} />}
+        {tab === 'today' && <TodayView {...shared} greeting={greetingTemplates[greetingIndex](displayName)} />}
         {tab === 'health' && <HealthView {...shared} />}
         {tab === 'personal' && <AreaView title="Personal / Home" description="The life-admin details that keep home running smoothly." area="personal" icon={Home} {...shared} />}
         {tab === 'work' && <AreaView title="Work Life" description="Keep the next career move visible and achievable." area="work" icon={BriefcaseBusiness} {...shared} />}
@@ -319,12 +362,13 @@ type ViewProps = {
   day: string;
   toggleTask: (task: Task) => Promise<void>;
   addTask: (title: string, type: TaskType, area: Area, projectId?: string | null) => Promise<void>;
+  reorderTask: (taskId: string, orderedTaskIds: string[], direction: -1 | 1) => Promise<void>;
   addWeight: (weight: number) => Promise<void>;
   addFocus: (session: Omit<FocusSession, 'id' | 'user_id'>) => Promise<void>;
 };
 
-function PageIntro({ eyebrow, title, copy, action }: { eyebrow: string; title: string; copy: string; action?: React.ReactNode }) {
-  return <div className="page-intro"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{copy}</p></div>{action}</div>;
+function PageIntro({ eyebrow, title, copy, action }: { eyebrow: string; title: string; copy?: string; action?: React.ReactNode }) {
+  return <div className="page-intro"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{copy && <p>{copy}</p>}</div>{action}</div>;
 }
 
 function isTaskDone(task: Task, data: LifeData, day: string) {
@@ -333,7 +377,8 @@ function isTaskDone(task: Task, data: LifeData, day: string) {
     : task.status === 'completed';
 }
 
-function TodayView(props: ViewProps) {
+function TodayView(props: ViewProps & { greeting: string }) {
+  const [reordering, setReordering] = useState(false);
   const { data, day } = props;
   const activeTasks = data.tasks.filter((task) => task.status !== 'archived');
   const done = activeTasks.filter((task) => isTaskDone(task, data, day));
@@ -341,7 +386,7 @@ function TodayView(props: ViewProps) {
   const daily = activeTasks.filter((task) => task.task_type === 'daily');
   const dailyDone = daily.filter((task) => isTaskDone(task, data, day)).length;
   return <>
-    <PageIntro eyebrow={prettyToday(data.settings.timezone)} title={`How are we doing today${data.settings.display_name ? `, ${data.settings.display_name}` : ''}?`} copy="Keep today light, visible and moving." />
+    <PageIntro eyebrow={prettyToday(data.settings.timezone)} title={props.greeting} />
     <section className="summary-grid">
       <SummaryCard label="Today" value={`${open.length} open`} detail={`${done.length} completed`} tone="lavender" icon={Check} />
       <SummaryCard label="Daily completion" value={`${daily.length ? Math.round((dailyDone / daily.length) * 100) : 0}%`} detail={`${dailyDone} of ${daily.length} daily items`} tone="mint" icon={BarChart3} />
@@ -350,8 +395,8 @@ function TodayView(props: ViewProps) {
     </section>
     <AddTaskForm projects={data.projects} onAdd={props.addTask} />
     <section className="today-layout">
-      <Card className="panel task-panel"><SectionHead title="Daily To Do" detail={`${open.length} remaining`} />
-        <CardContent><p className="panel-note">Daily items start fresh by date. COROS-linked items update after the morning and night syncs.</p><TaskList tasks={open} data={data} day={day} onToggle={props.toggleTask} /></CardContent>
+      <Card className="panel task-panel"><SectionHead title="Daily To Do" detail={`${open.length} remaining`} action={<button className={`reorder-toggle ${reordering ? 'active' : ''}`} onClick={() => setReordering((current) => !current)}>{reordering ? 'Done' : 'Reorder'}</button>} />
+        <CardContent><p className="panel-note">Daily items start fresh by date. COROS-linked items update after the morning and night syncs.</p><TaskList tasks={open} data={data} day={day} onToggle={props.toggleTask} reordering={reordering} onReorder={(taskId, direction) => props.reorderTask(taskId, open.map((task) => task.id), direction)} /></CardContent>
       </Card>
       <div className="side-stack">
         <BodyMiniCard data={data} onSave={props.addWeight} />
@@ -392,21 +437,22 @@ function AddTaskForm({ projects, onAdd }: { projects: Project[]; onAdd: ViewProp
   </form></Card>;
 }
 
-function SectionHead({ title, detail }: { title: string; detail?: string }) {
-  return <div className="section-head"><h2>{title}</h2>{detail && <span>{detail}</span>}</div>;
+function SectionHead({ title, detail, action }: { title: string; detail?: string; action?: React.ReactNode }) {
+  return <div className="section-head"><h2>{title}</h2><div className="section-head-actions">{detail && <span>{detail}</span>}{action}</div></div>;
 }
 
-function TaskList({ tasks, data, day, onToggle, compact = false, empty = 'No tasks here yet.' }: { tasks: Task[]; data: LifeData; day: string; onToggle: (task: Task) => Promise<void>; compact?: boolean; empty?: string }) {
+function TaskList({ tasks, data, day, onToggle, compact = false, empty = 'No tasks here yet.', reordering = false, onReorder }: { tasks: Task[]; data: LifeData; day: string; onToggle: (task: Task) => Promise<void>; compact?: boolean; empty?: string; reordering?: boolean; onReorder?: (taskId: string, direction: -1 | 1) => Promise<void> }) {
   if (!tasks.length) return <div className="empty-state"><Check /><p>{empty}</p></div>;
   return <div className={`task-list ${compact ? 'compact' : ''}`}>{tasks.map((task) => {
+    const index = tasks.findIndex((item) => item.id === task.id);
     const done = isTaskDone(task, data, day);
     const synced = Boolean(task.coros_metadata);
     const completion = completionFor(task, data, day);
     const progress = synced ? corosProgress(task, data, day) : null;
-    return <div className={`task-row ${done ? 'done' : ''}`} key={task.id}>
-      <button className="check-button" aria-label={`${done ? 'Reopen' : 'Complete'} ${task.title}`} onClick={() => void onToggle(task)}>{done && <Check />}</button>
+    return <div className={`task-row ${done ? 'done' : ''} ${reordering ? 'reordering' : ''}`} key={task.id}>
+      {reordering ? <span className="reorder-grip" aria-hidden="true"><GripVertical /></span> : <button className="check-button" aria-label={`${done ? 'Reopen' : 'Complete'} ${task.title}`} onClick={() => void onToggle(task)}>{done && <Check />}</button>}
       <div className="task-copy"><strong>{task.title}</strong><div className="task-meta"><span>{task.task_type === 'daily' ? 'Daily To Do' : task.task_type === 'project_subtask' ? 'Project task' : done ? 'Archived' : 'One-time'}</span>{synced && <span className={`sync-tag ${completion?.source === 'coros' ? 'verified' : ''}`}><RefreshCw /> {completion?.source === 'coros' ? 'COROS verified' : progress}</span>}</div></div>
-      {task.task_type !== 'daily' && done && <Archive className="archive-icon" />}
+      {reordering && onReorder ? <div className="reorder-controls"><button disabled={index === 0} aria-label={`Move ${task.title} up`} onClick={() => void onReorder(task.id, -1)}><ArrowUp /></button><button disabled={index === tasks.length - 1} aria-label={`Move ${task.title} down`} onClick={() => void onReorder(task.id, 1)}><ArrowDown /></button></div> : task.task_type !== 'daily' && done ? <Archive className="archive-icon" /> : null}
     </div>;
   })}</div>;
 }
