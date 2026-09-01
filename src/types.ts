@@ -25,6 +25,39 @@ export interface DailyCompletion {
   is_completed: boolean;
   source: 'manual' | 'coros' | 'system';
   completed_at: string | null;
+  actual_value?: number | null;
+  actual_unit?: string | null;
+  verified_at?: string | null;
+}
+
+export interface CorosDailyMetric {
+  id: string;
+  user_id: string;
+  metric_date: string;
+  steps: number | null;
+  calories: number | null;
+  exercise_minutes: number | null;
+  sleep_duration_minutes: number | null;
+  sleep_score: number | null;
+  sleep_status: 'complete' | 'partial' | 'missing' | 'not_synced' | 'not_checked';
+  sync_status: 'complete' | 'partial' | 'missing' | 'error';
+  latest_run_type: 'morning' | 'night' | 'manual' | 'reconciliation';
+  morning_synced_at: string | null;
+  night_synced_at: string | null;
+  last_synced_at: string;
+}
+
+export interface CorosActivity {
+  id: string;
+  user_id: string;
+  coros_activity_id: string;
+  activity_date: string;
+  activity_type: string;
+  started_at: string | null;
+  duration_seconds: number | null;
+  distance_km: number | null;
+  jump_count: number | null;
+  calories: number | null;
 }
 
 export interface Project {
@@ -73,5 +106,7 @@ export interface LifeData {
   projects: Project[];
   weights: WeightEntry[];
   focusSessions: FocusSession[];
+  corosMetrics: CorosDailyMetric[];
+  corosActivities: CorosActivity[];
   settings: UserSettings;
 }

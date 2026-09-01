@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "record_date": "2026-09-01",
+  "timezone": "Asia/Kolkata",
+  "run_type": "night",
+  "captured_at": "2026-09-01T23:55:00+05:30",
+  "sync_status": "complete",
+  "daily": {
+    "steps": 10482,
+    "calories": 612,
+    "exercise_minutes": 64,
+    "sleep_duration_minutes": 467,
+    "sleep_score": 81,
+    "sleep_status": "complete"
+  },
+  "activities": [
+    {
+      "coros_activity_id": "example-walk-2026-09-01",
+      "activity_type": "Walk",
+      "activity_date": "2026-09-01",
+      "started_at": "2026-09-01T06:45:00+05:30",
+      "duration_seconds": 3720,
+      "distance_km": 5.24,
+      "jump_count": null,
+      "calories": 318
+    },
+    {
+      "coros_activity_id": "example-jump-rope-2026-09-01",
+      "activity_type": "Jump Rope",
+      "activity_date": "2026-09-01",
+      "started_at": "2026-09-01T18:30:00+05:30",
+      "duration_seconds": 780,
+      "distance_km": null,
+      "jump_count": 1050,
+      "calories": 126
+    }
+  ]
+}

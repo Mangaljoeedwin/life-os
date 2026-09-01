@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
   Archive,
+  Activity,
   BarChart3,
   BriefcaseBusiness,
   Check,
@@ -10,10 +11,12 @@ import {
   Cloud,
   Dumbbell,
   FolderKanban,
+  Flame,
   HeartPulse,
   Home,
   LogOut,
   Menu,
+  Moon,
   Pause,
   Play,
   Plus,
@@ -29,7 +32,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { makeDemoData } from './demo';
 import { hasSupabaseConfig, supabase } from './supabase';
-import type { Area, FocusSession, LifeData, Project, Task, TaskType, WeightEntry } from './types';
+import type { Area, CorosActivity, CorosDailyMetric, DailyCompletion, FocusSession, LifeData, Project, Task, TaskType, WeightEntry } from './types';
 
 type Tab = 'today' | 'health' | 'personal' | 'work' | 'projects' | 'focus' | 'body';
 const tabs: { id: Tab; label: string; short: string; icon: typeof Home }[] = [
@@ -111,15 +114,17 @@ export function App() {
   const loadData = useCallback(async () => {
     if (!supabase || !session?.user.id) return;
     setLoading(true);
-    const [tasks, completions, projects, weights, sessions, settings] = await Promise.all([
+    const [tasks, completions, projects, weights, sessions, settings, corosMetrics, corosActivities] = await Promise.all([
       supabase.from('tasks').select('*').order('sort_order'),
       supabase.from('daily_completions').select('*').order('completion_date', { ascending: false }),
       supabase.from('projects').select('*').is('archived_at', null).order('sort_order'),
       supabase.from('weight_entries').select('*').order('entry_date'),
       supabase.from('focus_sessions').select('*').order('started_at', { ascending: false }).limit(50),
       supabase.from('user_settings').select('*').single(),
+      supabase.from('coros_daily_metrics').select('*').order('metric_date', { ascending: false }).limit(31),
+      supabase.from('coros_activities').select('*').order('started_at', { ascending: false }).limit(100),
     ]);
-    const failure = [tasks, completions, projects, weights, sessions, settings].find((result) => result.error);
+    const failure = [tasks, completions, projects, weights, sessions, settings, corosMetrics, corosActivities].find((result) => result.error);
     if (failure?.error) setError(failure.error.message);
     else {
       setError('');
@@ -129,6 +134,8 @@ export function App() {
         projects: (projects.data ?? []) as Project[],
         weights: (weights.data ?? []) as WeightEntry[],
         focusSessions: (sessions.data ?? []) as FocusSession[],
+        corosMetrics: (corosMetrics.data ?? []) as CorosDailyMetric[],
+        corosActivities: (corosActivities.data ?? []) as CorosActivity[],
         settings: settings.data,
       });
     }
@@ -153,6 +160,8 @@ export function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'projects', filter: `user_id=eq.${session.user.id}` }, loadData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'weight_entries', filter: `user_id=eq.${session.user.id}` }, loadData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'focus_sessions', filter: `user_id=eq.${session.user.id}` }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'coros_daily_metrics', filter: `user_id=eq.${session.user.id}` }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'coros_activities', filter: `user_id=eq.${session.user.id}` }, loadData)
       .subscribe();
     return () => { void client.removeChannel(channel); };
   }, [session, loadData]);
@@ -340,7 +349,7 @@ function TodayView(props: ViewProps) {
     <AddTaskForm projects={data.projects} onAdd={props.addTask} />
     <section className="today-layout">
       <Card className="panel task-panel"><SectionHead title="Daily To Do" detail={`${open.length} remaining`} />
-        <CardContent><p className="panel-note">Daily items start fresh by date. COROS-ready items can be verified automatically later.</p><TaskList tasks={open} data={data} day={day} onToggle={props.toggleTask} /></CardContent>
+        <CardContent><p className="panel-note">Daily items start fresh by date. COROS-linked items update after the morning and night syncs.</p><TaskList tasks={open} data={data} day={day} onToggle={props.toggleTask} /></CardContent>
       </Card>
       <div className="side-stack">
         <BodyMiniCard data={data} onSave={props.addWeight} />
@@ -390,9 +399,11 @@ function TaskList({ tasks, data, day, onToggle, compact = false, empty = 'No tas
   return <div className={`task-list ${compact ? 'compact' : ''}`}>{tasks.map((task) => {
     const done = isTaskDone(task, data, day);
     const synced = Boolean(task.coros_metadata);
+    const completion = completionFor(task, data, day);
+    const progress = synced ? corosProgress(task, data, day) : null;
     return <div className={`task-row ${done ? 'done' : ''}`} key={task.id}>
       <button className="check-button" aria-label={`${done ? 'Reopen' : 'Complete'} ${task.title}`} onClick={() => void onToggle(task)}>{done && <Check />}</button>
-      <div className="task-copy"><strong>{task.title}</strong><div className="task-meta"><span>{task.task_type === 'daily' ? 'Daily To Do' : task.task_type === 'project_subtask' ? 'Project task' : done ? 'Archived' : 'One-time'}</span>{synced && <span className="sync-tag"><RefreshCw /> COROS-ready</span>}</div></div>
+      <div className="task-copy"><strong>{task.title}</strong><div className="task-meta"><span>{task.task_type === 'daily' ? 'Daily To Do' : task.task_type === 'project_subtask' ? 'Project task' : done ? 'Archived' : 'One-time'}</span>{synced && <span className={`sync-tag ${completion?.source === 'coros' ? 'verified' : ''}`}><RefreshCw /> {completion?.source === 'coros' ? 'COROS verified' : progress}</span>}</div></div>
       {task.task_type !== 'daily' && done && <Archive className="archive-icon" />}
     </div>;
   })}</div>;
@@ -400,16 +411,19 @@ function TaskList({ tasks, data, day, onToggle, compact = false, empty = 'No tas
 
 function HealthView(props: ViewProps) {
   const healthTasks = props.data.tasks.filter((task) => task.area === 'health' && task.task_type === 'daily');
+  const todayMetric = metricFor(props.data, props.day);
+  const lastSync = props.data.corosMetrics.map((metric) => metric.last_synced_at).filter(Boolean).sort().at(-1);
   const days = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(); date.setDate(date.getDate() - (6 - index));
     return { key: date.toLocaleDateString('en-CA', { timeZone: props.data.settings.timezone }), label: new Intl.DateTimeFormat('en', { weekday: 'narrow', timeZone: props.data.settings.timezone }).format(date) };
   });
   return <>
-    <PageIntro eyebrow="Consistency, not perfection" title="Health" copy="Daily choices, weekly evidence and future COROS connections in one place." />
-    <section className="summary-grid three">
-      <SummaryCard label="Current streak" value={`${calculateStreak(props.data, healthTasks)} days`} detail="Across health commitments" tone="mint" icon={Sparkles} />
-      <SummaryCard label="COROS-ready" value={`${healthTasks.filter((task) => task.coros_metadata).length} tasks`} detail="Metadata prepared" tone="blue" icon={RefreshCw} />
-      <SummaryCard label="Latest weight" value={`${latestWeight(props.data)?.weight_kg ?? '—'} kg`} detail={`Goal ${props.data.settings.weight_goal_kg} kg`} tone="peach" icon={Scale} />
+    <PageIntro eyebrow="Consistency, not perfection" title="Health" copy="Daily choices and COROS evidence, kept together and updated by your two scheduled syncs." />
+    <section className="summary-grid health-metrics">
+      <SummaryCard label="Sleep" value={formatMinutes(todayMetric?.sleep_duration_minutes)} detail={todayMetric?.sleep_duration_minutes == null ? 'Awaiting sync' : `Score ${todayMetric.sleep_score ?? '—'}`} tone="lavender" icon={Moon} />
+      <SummaryCard label="Calories" value={todayMetric?.calories == null ? '—' : Math.round(todayMetric.calories).toLocaleString('en-IN')} detail={todayMetric?.calories == null ? 'Awaiting sync' : 'Today from COROS'} tone="peach" icon={Flame} />
+      <SummaryCard label="Exercise" value={todayMetric?.exercise_minutes == null ? '—' : `${todayMetric.exercise_minutes} min`} detail={todayMetric?.exercise_minutes == null ? 'Awaiting sync' : 'Today from COROS'} tone="mint" icon={Activity} />
+      <SummaryCard label="Last COROS sync" value={lastSync ? formatSyncTime(lastSync) : 'Awaiting'} detail={todayMetric ? `${capitalize(todayMetric.latest_run_type)} · ${capitalize(todayMetric.sync_status)}` : 'No data received yet'} tone="blue" icon={RefreshCw} />
     </section>
     <Card className="panel habit-panel"><SectionHead title="This week · habit history" detail="Prior days stay recorded" /><CardContent>
       <div className="habit-scroll"><div className="habit-grid" style={{ gridTemplateColumns: `minmax(180px, 1fr) repeat(${days.length}, 44px)` }}>
@@ -420,20 +434,57 @@ function HealthView(props: ViewProps) {
         </div>)}
       </div></div>
     </CardContent></Card>
-    <Card className="panel coros-card"><CardContent><div className="coros-icon"><Dumbbell /></div><div><p className="eyebrow">Ready for Phase 4 automation</p><h2>COROS verification metadata is already modeled</h2><p>“5km daily walk” tracks walking distance with a 5 km threshold. “10,000 steps a day” tracks the daily step total. Manual override remains available.</p></div></CardContent></Card>
+    <Card className="panel coros-card"><CardContent><div className="coros-icon"><Dumbbell /></div><div><p className="eyebrow">Scheduled COROS connection</p><h2>Morning and night syncs update Life OS</h2><p>Steps and sleep use the day’s totals. Walking requires one Walk or Run of at least 5 km, and skipping requires one Jump Rope session of at least 1,000 jumps. Missing data stays marked “Awaiting sync”; manual tasks remain yours to tick.</p></div></CardContent></Card>
   </>;
 }
 
-function calculateStreak(data: LifeData, tasks: Task[]) {
-  if (!tasks.length) return 0;
-  let streak = 0;
-  for (let offset = 0; offset < 365; offset += 1) {
-    const date = new Date(); date.setDate(date.getDate() - offset);
-    const key = date.toLocaleDateString('en-CA', { timeZone: data.settings.timezone });
-    if (tasks.some((task) => data.completions.some((completion) => completion.task_id === task.id && completion.completion_date === key && completion.is_completed))) streak += 1;
-    else if (offset > 0) break;
+function completionFor(task: Task, data: LifeData, day: string): DailyCompletion | undefined {
+  return data.completions.find((item) => item.task_id === task.id && item.completion_date === day && item.is_completed);
+}
+
+function metricFor(data: LifeData, day: string) {
+  return data.corosMetrics.find((metric) => metric.metric_date === day);
+}
+
+function formatMinutes(minutes: number | null | undefined) {
+  if (minutes == null) return '—';
+  return `${Math.floor(minutes / 60)}h ${Math.round(minutes % 60)}m`;
+}
+
+function formatSyncTime(value: string) {
+  return new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit' }).format(new Date(value));
+}
+
+function capitalize(value: string) { return value.charAt(0).toUpperCase() + value.slice(1); }
+
+function matchingActivities(task: Task, data: LifeData, day: string) {
+  const allowed = ((task.coros_metadata?.activity_types as string[] | undefined) ?? []).map((item) => item.toLowerCase());
+  return data.corosActivities.filter((activity) => activity.activity_date === day && allowed.includes(activity.activity_type.toLowerCase()));
+}
+
+function corosProgress(task: Task, data: LifeData, day: string) {
+  const rule = task.coros_metadata ?? {};
+  const metric = typeof rule.metric === 'string' ? rule.metric : '';
+  const threshold = Number(rule.threshold ?? 0);
+  const daily = metricFor(data, day);
+  let actual: number | null = null;
+
+  if (metric === 'steps') actual = daily?.steps ?? null;
+  if (metric === 'sleep_duration_minutes') actual = daily?.sleep_duration_minutes ?? null;
+  if (metric === 'distance_km') {
+    const values = matchingActivities(task, data, day).map((activity) => activity.distance_km).filter((value): value is number => value != null);
+    actual = values.length ? Math.max(...values) : null;
   }
-  return streak;
+  if (metric === 'jump_count') {
+    const values = matchingActivities(task, data, day).map((activity) => activity.jump_count).filter((value): value is number => value != null);
+    actual = values.length ? Math.max(...values) : null;
+  }
+  if (actual == null) return 'Awaiting sync';
+  if (metric === 'steps') return `${Math.round(actual).toLocaleString('en-IN')} / ${threshold.toLocaleString('en-IN')} steps`;
+  if (metric === 'distance_km') return `${actual.toFixed(2)} / ${threshold.toFixed(2)} km · one activity`;
+  if (metric === 'jump_count') return `${Math.round(actual).toLocaleString('en-IN')} / ${threshold.toLocaleString('en-IN')} jumps · one session`;
+  if (metric === 'sleep_duration_minutes') return `${formatMinutes(actual)} / more than ${formatMinutes(threshold)}`;
+  return 'COROS linked';
 }
 
 function AreaView({ title, description, area, icon: Icon, ...props }: ViewProps & { title: string; description: string; area: Area; icon: typeof Home }) {

@@ -100,5 +100,7 @@ This URL configuration tells Supabase which Life OS webpages it is allowed to re
 - `weight_entries`: one manual measurement per user per date
 - `focus_sessions`: completed focus blocks and task links
 - `user_settings`: timezone, height and weight goal
+- `coros_daily_metrics`: daily sleep, steps, calories, exercise minutes and sync status
+- `coros_activities`: individual activities used for the single-walk and single-jump-rope rules
 
-COROS metadata is stored as JSON on eligible tasks, ready for a later integration. No COROS API or PWA/offline cache is included in Phase 2.
+COROS automation is implemented as an optional Phase 2 extension. Start with [`supabase/COROS_SETUP.md`](supabase/COROS_SETUP.md). It stores source measurements separately from completion history and lets the existing morning and night scheduled tasks update Life OS through a one-purpose Supabase Edge Function. No PWA/offline cache is included yet.
