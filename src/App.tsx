@@ -103,7 +103,7 @@ function AuthScreen() {
   return (
     <main className="auth-page">
       <section className="auth-card">
-        <div className="brand-mark"><Sparkles size={22} /></div>
+        <div className="brand-mark"><img src="./life-os-avatar.png" alt="" /></div>
         <p className="eyebrow">Your personal operating system</p>
         <h1>Life OS</h1>
         <p className="auth-copy">One calm place for your daily commitments, projects, health and focused work — synced across every screen.</p>
@@ -345,7 +345,7 @@ export function App() {
     <div className="app-shell">
       {needsName && <NamePrompt onSave={saveDisplayName} />}
       <header className="topbar">
-        <button className="brand" onClick={() => setTab('today')}><span className="brand-mark"><Sparkles size={18} /></span><span>Life OS</span></button>
+        <button className="brand" onClick={() => setTab('today')}><span className="brand-mark"><img src="./life-os-avatar.png" alt="" /></span><span>Life OS</span></button>
         <nav className="desktop-nav" aria-label="Primary navigation">
           {tabs.map((item) => <NavButton key={item.id} item={item} active={tab === item.id} onClick={() => setTab(item.id)} />)}
         </nav>
@@ -386,7 +386,7 @@ function NamePrompt({ onSave }: { onSave: (name: string) => Promise<void> }) {
   const [saving, setSaving] = useState(false);
   return <div className="name-prompt-backdrop" role="presentation">
     <Card className="name-prompt" role="dialog" aria-modal="true" aria-labelledby="name-prompt-title"><CardContent>
-      <div className="brand-mark"><Sparkles size={20} /></div>
+      <div className="brand-mark"><img src="./life-os-avatar.png" alt="" /></div>
       <p className="eyebrow">One last personal touch</p>
       <h2 id="name-prompt-title">What should we call you?</h2>
       <p>This is the name Life OS will use when it welcomes you. You can enter your first name or any name you prefer.</p>
