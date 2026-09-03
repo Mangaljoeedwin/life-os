@@ -8,17 +8,21 @@ import {
   BarChart3,
   BriefcaseBusiness,
   Check,
+  CheckCircle2,
+  CalendarDays,
   ChevronRight,
   Clock3,
   Cloud,
   Dumbbell,
   FolderKanban,
+  FolderPlus,
   Flame,
   GripVertical,
   HeartPulse,
   Home,
   LogOut,
   Menu,
+  MoreHorizontal,
   Moon,
   Pause,
   Play,
@@ -28,6 +32,8 @@ import {
   Scale,
   Sparkles,
   TimerReset,
+  Trash2,
+  Undo2,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -38,6 +44,15 @@ import { hasSupabaseConfig, supabase } from './supabase';
 import type { Area, CorosActivity, CorosDailyMetric, DailyCompletion, FocusSession, LifeData, Project, Task, TaskType, WeightEntry } from './types';
 
 type Tab = 'today' | 'health' | 'personal' | 'work' | 'projects' | 'focus' | 'body';
+type TaskPriority = Task['priority'];
+type TaskDraft = {
+  title: string;
+  task_type: TaskType;
+  area: Area;
+  project_id: string | null;
+  priority: TaskPriority;
+  due_date: string | null;
+};
 const tabs: { id: Tab; label: string; short: string; icon: typeof Home }[] = [
   { id: 'today', label: 'Today', short: 'Today', icon: Sparkles },
   { id: 'health', label: 'Health', short: 'Health', icon: HeartPulse },
@@ -128,7 +143,7 @@ export function App() {
     const [tasks, completions, projects, weights, sessions, settings, corosMetrics, corosActivities] = await Promise.all([
       supabase.from('tasks').select('*').order('sort_order'),
       supabase.from('daily_completions').select('*').order('completion_date', { ascending: false }),
-      supabase.from('projects').select('*').is('archived_at', null).order('sort_order'),
+      supabase.from('projects').select('*').order('sort_order'),
       supabase.from('weight_entries').select('*').order('entry_date'),
       supabase.from('focus_sessions').select('*').order('started_at', { ascending: false }).limit(50),
       supabase.from('user_settings').select('*').single(),
@@ -212,10 +227,10 @@ export function App() {
     }
   }
 
-  async function addTask(title: string, taskType: TaskType, area: Area, projectId: string | null = null) {
+  async function addTask(title: string, taskType: TaskType, area: Area, projectId: string | null = null, priority: TaskPriority = 'normal', dueDate: string | null = null) {
     const newTask: Task = {
       id: uid(), user_id: userId, title, task_type: taskType, area, project_id: projectId,
-      status: 'open', priority: 'normal', sort_order: data.tasks.length + 1, coros_metadata: null,
+      status: 'open', priority, sort_order: data.tasks.length + 1, due_date: dueDate, coros_metadata: null,
       completed_at: null, created_at: new Date().toISOString(),
     };
     setData((current) => ({ ...current, tasks: [...current.tasks, newTask] }));
@@ -225,29 +240,61 @@ export function App() {
     }
   }
 
-  async function reorderTask(taskId: string, orderedTaskIds: string[], direction: -1 | 1) {
-    const index = orderedTaskIds.indexOf(taskId);
-    const siblingId = orderedTaskIds[index + direction];
-    if (index < 0 || !siblingId) return;
-    const task = data.tasks.find((item) => item.id === taskId);
-    const sibling = data.tasks.find((item) => item.id === siblingId);
-    if (!task || !sibling) return;
+  async function updateTask(taskId: string, patch: Partial<TaskDraft>) {
+    setData((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === taskId ? { ...item, ...patch } as Task : item) }));
+    if (supabase) {
+      const { error: saveError } = await supabase.from('tasks').update(patch).eq('id', taskId);
+      if (saveError) { setError(saveError.message); void loadData(); }
+    }
+  }
 
-    const nextTask = { ...task, sort_order: sibling.sort_order };
-    const nextSibling = { ...sibling, sort_order: task.sort_order };
+  async function deleteTask(task: Task) {
+    if (!window.confirm(`Delete “${task.title}”? This will also remove its saved completion history.`)) return;
+    setData((current) => ({
+      ...current,
+      tasks: current.tasks.filter((item) => item.id !== task.id),
+      completions: current.completions.filter((item) => item.task_id !== task.id),
+    }));
+    if (supabase) {
+      const { error: saveError } = await supabase.from('tasks').delete().eq('id', task.id);
+      if (saveError) { setError(saveError.message); void loadData(); }
+    }
+  }
+
+  async function reorderTasks(orderedTaskIds: string[]) {
+    if (orderedTaskIds.length < 2) return;
+    const order = new Map(orderedTaskIds.map((id, index) => [id, index]));
     setData((current) => ({
       ...current,
       tasks: current.tasks
-        .map((item) => item.id === taskId ? nextTask : item.id === siblingId ? nextSibling : item)
+        .map((item) => order.has(item.id) ? { ...item, sort_order: order.get(item.id)! } : item)
         .sort((a, b) => a.sort_order - b.sort_order),
     }));
 
     if (supabase) {
-      const [taskResult, siblingResult] = await Promise.all([
-        supabase.from('tasks').update({ sort_order: nextTask.sort_order }).eq('id', taskId),
-        supabase.from('tasks').update({ sort_order: nextSibling.sort_order }).eq('id', siblingId),
-      ]);
-      const saveError = taskResult.error ?? siblingResult.error;
+      const client = supabase;
+      const results = await Promise.all(orderedTaskIds.map((id, index) => client.from('tasks').update({ sort_order: index }).eq('id', id)));
+      const saveError = results.find((result) => result.error)?.error;
+      if (saveError) { setError(saveError.message); void loadData(); }
+    }
+  }
+
+  async function addProject(name: string, description: string) {
+    const project: Project = {
+      id: uid(), user_id: userId, name, description: description || null,
+      sort_order: data.projects.length, completed_at: null, archived_at: null,
+    };
+    setData((current) => ({ ...current, projects: [...current.projects, project] }));
+    if (supabase) {
+      const { error: saveError } = await supabase.from('projects').insert(project);
+      if (saveError) { setError(saveError.message); void loadData(); }
+    }
+  }
+
+  async function updateProject(projectId: string, patch: Partial<Pick<Project, 'name' | 'description' | 'completed_at' | 'archived_at'>>) {
+    setData((current) => ({ ...current, projects: current.projects.map((item) => item.id === projectId ? { ...item, ...patch } : item) }));
+    if (supabase) {
+      const { error: saveError } = await supabase.from('projects').update(patch).eq('id', projectId);
       if (saveError) { setError(saveError.message); void loadData(); }
     }
   }
@@ -292,7 +339,7 @@ export function App() {
   if (loading) return <LoadingScreen />;
 
   const displayName = data.settings.display_name ?? '';
-  const shared = { data, day, toggleTask, addTask, reorderTask, addWeight, addFocus };
+  const shared = { data, day, toggleTask, addTask, updateTask, deleteTask, reorderTasks, addProject, updateProject, addWeight, addFocus };
   const needsName = Boolean(session && !session.user.user_metadata?.display_name);
   return (
     <div className="app-shell">
@@ -361,8 +408,12 @@ type ViewProps = {
   data: LifeData;
   day: string;
   toggleTask: (task: Task) => Promise<void>;
-  addTask: (title: string, type: TaskType, area: Area, projectId?: string | null) => Promise<void>;
-  reorderTask: (taskId: string, orderedTaskIds: string[], direction: -1 | 1) => Promise<void>;
+  addTask: (title: string, type: TaskType, area: Area, projectId?: string | null, priority?: TaskPriority, dueDate?: string | null) => Promise<void>;
+  updateTask: (taskId: string, patch: Partial<TaskDraft>) => Promise<void>;
+  deleteTask: (task: Task) => Promise<void>;
+  reorderTasks: (orderedTaskIds: string[]) => Promise<void>;
+  addProject: (name: string, description: string) => Promise<void>;
+  updateProject: (projectId: string, patch: Partial<Pick<Project, 'name' | 'description' | 'completed_at' | 'archived_at'>>) => Promise<void>;
   addWeight: (weight: number) => Promise<void>;
   addFocus: (session: Omit<FocusSession, 'id' | 'user_id'>) => Promise<void>;
 };
@@ -396,12 +447,12 @@ function TodayView(props: ViewProps & { greeting: string }) {
     <AddTaskForm projects={data.projects} onAdd={props.addTask} />
     <section className="today-layout">
       <Card className="panel task-panel"><SectionHead title="Daily To Do" detail={`${open.length} remaining`} action={<button className={`reorder-toggle ${reordering ? 'active' : ''}`} onClick={() => setReordering((current) => !current)}>{reordering ? 'Done' : 'Reorder'}</button>} />
-        <CardContent><p className="panel-note">Daily items start fresh by date. COROS-linked items update after the morning and night syncs.</p><TaskList tasks={open} data={data} day={day} onToggle={props.toggleTask} reordering={reordering} onReorder={(taskId, direction) => props.reorderTask(taskId, open.map((task) => task.id), direction)} /></CardContent>
+        <CardContent><p className="panel-note">Daily items start fresh by date. COROS-linked items update after the morning and night syncs.</p><TaskList tasks={open} data={data} day={day} onToggle={props.toggleTask} projects={data.projects} onUpdate={props.updateTask} onDelete={props.deleteTask} reordering={reordering} onReorder={props.reorderTasks} /></CardContent>
       </Card>
       <div className="side-stack">
         <BodyMiniCard data={data} onSave={props.addWeight} />
         <Card className="panel"><SectionHead title="Completed today" detail={`${done.length} done`} />
-          <CardContent><TaskList tasks={done} data={data} day={day} onToggle={props.toggleTask} compact empty="Nothing completed yet — the first check is the hardest." /></CardContent>
+          <CardContent><TaskList tasks={done} data={data} day={day} onToggle={props.toggleTask} projects={data.projects} onUpdate={props.updateTask} onDelete={props.deleteTask} compact empty="Nothing completed yet — the first check is the hardest." /></CardContent>
         </Card>
       </div>
     </section>
@@ -418,20 +469,24 @@ function AddTaskForm({ projects, onAdd }: { projects: Project[]; onAdd: ViewProp
   const [type, setType] = useState<TaskType>('daily');
   const [area, setArea] = useState<Area>('today');
   const [projectId, setProjectId] = useState('');
+  const [priority, setPriority] = useState<TaskPriority>('normal');
+  const [dueDate, setDueDate] = useState('');
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!title.trim()) return;
-    await onAdd(title.trim(), projectId ? 'project_subtask' : type, projectId ? 'projects' : area, projectId || null);
-    setTitle(''); setProjectId(''); setOpen(false);
+    await onAdd(title.trim(), projectId ? 'project_subtask' : type, projectId ? 'projects' : area, projectId || null, priority, dueDate || null);
+    setTitle(''); setProjectId(''); setPriority('normal'); setDueDate(''); setOpen(false);
   }
   if (!open) return <button className="add-commitment" onClick={() => setOpen(true)}><span><Plus /></span><div><strong>Add a commitment</strong><small>Daily To Do, one-time task or project step</small></div><ChevronRight /></button>;
   return <Card className="add-form-card"><form onSubmit={submit} className="add-form">
     <div className="form-title"><div><p className="eyebrow">New commitment</p><h2>What needs your attention?</h2></div><Button type="button" variant="ghost" size="icon" onClick={() => setOpen(false)}><X /></Button></div>
     <Input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Call Martin tomorrow" />
-    <div className="form-grid">
+    <div className="form-grid task-fields">
       <label>Behavior<select value={type} onChange={(event) => setType(event.target.value as TaskType)} disabled={Boolean(projectId)}><option value="daily">Daily To Do</option><option value="one_time">One-time</option></select></label>
       <label>Category<select value={area} onChange={(event) => setArea(event.target.value as Area)} disabled={Boolean(projectId)}><option value="today">Today</option><option value="health">Health</option><option value="personal">Personal / Home</option><option value="work">Work Life</option></select></label>
-      <label>Project (optional)<select value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">No project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+      <label>Project (optional)<select value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">No project</option>{projects.filter((project) => !project.archived_at).map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+      <label>Priority<select value={priority} onChange={(event) => setPriority(event.target.value as TaskPriority)}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option></select></label>
+      <label>Due date<Input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
     </div>
     <div className="form-actions"><Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button type="submit" className="primary-button"><Plus /> Add commitment</Button></div>
   </form></Card>;
@@ -441,20 +496,122 @@ function SectionHead({ title, detail, action }: { title: string; detail?: string
   return <div className="section-head"><h2>{title}</h2><div className="section-head-actions">{detail && <span>{detail}</span>}{action}</div></div>;
 }
 
-function TaskList({ tasks, data, day, onToggle, compact = false, empty = 'No tasks here yet.', reordering = false, onReorder }: { tasks: Task[]; data: LifeData; day: string; onToggle: (task: Task) => Promise<void>; compact?: boolean; empty?: string; reordering?: boolean; onReorder?: (taskId: string, direction: -1 | 1) => Promise<void> }) {
+type TaskListProps = {
+  tasks: Task[];
+  data: LifeData;
+  day: string;
+  onToggle: (task: Task) => Promise<void>;
+  projects: Project[];
+  onUpdate: ViewProps['updateTask'];
+  onDelete: ViewProps['deleteTask'];
+  compact?: boolean;
+  empty?: string;
+  reordering?: boolean;
+  onReorder?: ViewProps['reorderTasks'];
+};
+
+function moveId(ids: string[], taskId: string, targetIndex: number) {
+  const from = ids.indexOf(taskId);
+  if (from < 0 || targetIndex < 0 || targetIndex >= ids.length || from === targetIndex) return ids;
+  const next = [...ids];
+  next.splice(from, 1);
+  next.splice(targetIndex, 0, taskId);
+  return next;
+}
+
+function TaskList({ tasks, data, day, onToggle, projects, onUpdate, onDelete, compact = false, empty = 'No tasks here yet.', reordering = false, onReorder }: TaskListProps) {
+  const [editing, setEditing] = useState<Task | null>(null);
+  const [orderedIds, setOrderedIds] = useState(() => tasks.map((task) => task.id));
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const taskKey = tasks.map((task) => task.id).join('|');
+  useEffect(() => { if (!draggedId) setOrderedIds(tasks.map((task) => task.id)); }, [taskKey, draggedId, tasks]);
+  const orderedTasks = orderedIds.map((id) => tasks.find((task) => task.id === id)).filter((task): task is Task => Boolean(task));
+
+  function finishReorder() {
+    if (draggedId && onReorder) void onReorder(orderedIds);
+    setDraggedId(null);
+  }
+
   if (!tasks.length) return <div className="empty-state"><Check /><p>{empty}</p></div>;
-  return <div className={`task-list ${compact ? 'compact' : ''}`}>{tasks.map((task) => {
-    const index = tasks.findIndex((item) => item.id === task.id);
-    const done = isTaskDone(task, data, day);
-    const synced = Boolean(task.coros_metadata);
-    const completion = completionFor(task, data, day);
-    const progress = synced ? corosProgress(task, data, day) : null;
-    return <div className={`task-row ${done ? 'done' : ''} ${reordering ? 'reordering' : ''}`} key={task.id}>
-      {reordering ? <span className="reorder-grip" aria-hidden="true"><GripVertical /></span> : <button className="check-button" aria-label={`${done ? 'Reopen' : 'Complete'} ${task.title}`} onClick={() => void onToggle(task)}>{done && <Check />}</button>}
-      <div className="task-copy"><strong>{task.title}</strong><div className="task-meta"><span>{task.task_type === 'daily' ? 'Daily To Do' : task.task_type === 'project_subtask' ? 'Project task' : done ? 'Archived' : 'One-time'}</span>{synced && <span className={`sync-tag ${completion?.source === 'coros' ? 'verified' : ''}`}><RefreshCw /> {completion?.source === 'coros' ? 'COROS verified' : progress}</span>}</div></div>
-      {reordering && onReorder ? <div className="reorder-controls"><button disabled={index === 0} aria-label={`Move ${task.title} up`} onClick={() => void onReorder(task.id, -1)}><ArrowUp /></button><button disabled={index === tasks.length - 1} aria-label={`Move ${task.title} down`} onClick={() => void onReorder(task.id, 1)}><ArrowDown /></button></div> : task.task_type !== 'daily' && done ? <Archive className="archive-icon" /> : null}
-    </div>;
-  })}</div>;
+  return <>
+    <div className={`task-list ${compact ? 'compact' : ''} ${draggedId ? 'is-dragging' : ''}`}>{orderedTasks.map((task, index) => {
+      const done = isTaskDone(task, data, day);
+      const synced = Boolean(task.coros_metadata);
+      const completion = completionFor(task, data, day);
+      const progress = synced ? corosProgress(task, data, day) : null;
+      const overdue = Boolean(task.due_date && task.due_date < day && !done);
+      return <div
+        className={`task-row ${done ? 'done' : ''} ${reordering ? 'reordering' : ''} ${draggedId === task.id ? 'dragging' : ''}`}
+        data-task-id={task.id}
+        key={task.id}
+      >
+        {reordering ? <button
+          type="button"
+          className="reorder-grip"
+          aria-label={`Drag ${task.title} to reorder`}
+          onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); setDraggedId(task.id); }}
+          onPointerMove={(event) => {
+            if (!draggedId) return;
+            const row = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-task-id]');
+            if (!row?.dataset.taskId) return;
+            const target = orderedIds.indexOf(row.dataset.taskId);
+            setOrderedIds((current) => moveId(current, draggedId, target));
+          }}
+          onPointerUp={finishReorder}
+          onPointerCancel={finishReorder}
+        ><GripVertical /></button> : <button className="check-button" aria-label={`${done ? 'Reopen' : 'Complete'} ${task.title}`} onClick={() => void onToggle(task)}>{done && <Check />}</button>}
+        <div className="task-copy"><strong>{task.title}</strong><div className="task-meta">
+          <span>{task.task_type === 'daily' ? 'Daily To Do' : task.task_type === 'project_subtask' ? 'Project task' : done ? 'Completed' : 'One-time'}</span>
+          {task.priority !== 'normal' && <span className={`priority-tag ${task.priority}`}>{task.priority} priority</span>}
+          {task.due_date && <span className={`due-tag ${overdue ? 'overdue' : ''}`}><CalendarDays /> {task.due_date === day ? 'Due today' : task.due_date}</span>}
+          {synced && <span className={`sync-tag ${completion?.source === 'coros' ? 'verified' : ''}`}><RefreshCw /> {completion?.source === 'coros' ? 'COROS verified' : progress}</span>}
+        </div></div>
+        <div className="task-row-actions">
+          {reordering && onReorder ? <div className="reorder-controls"><button disabled={index === 0} aria-label={`Move ${task.title} up`} onClick={() => { const next = moveId(orderedIds, task.id, index - 1); setOrderedIds(next); void onReorder(next); }}><ArrowUp /></button><button disabled={index === orderedTasks.length - 1} aria-label={`Move ${task.title} down`} onClick={() => { const next = moveId(orderedIds, task.id, index + 1); setOrderedIds(next); void onReorder(next); }}><ArrowDown /></button></div> : <>
+            {task.task_type !== 'daily' && done && <Archive className="archive-icon" />}
+            <button type="button" className="task-menu-button" aria-label={`Edit ${task.title}`} onClick={() => setEditing(task)}><MoreHorizontal /></button>
+          </>}
+        </div>
+      </div>;
+    })}</div>
+    {editing && <TaskEditor task={editing} projects={projects} onClose={() => setEditing(null)} onSave={async (patch) => { await onUpdate(editing.id, patch); setEditing(null); }} onDelete={async () => { await onDelete(editing); setEditing(null); }} />}
+  </>;
+}
+
+function TaskEditor({ task, projects, onClose, onSave, onDelete }: { task: Task; projects: Project[]; onClose: () => void; onSave: (patch: Partial<TaskDraft>) => Promise<void>; onDelete: () => Promise<void> }) {
+  const [title, setTitle] = useState(task.title);
+  const [behavior, setBehavior] = useState<TaskType>(task.task_type === 'project_subtask' ? 'one_time' : task.task_type);
+  const [destination, setDestination] = useState(task.project_id ? `project:${task.project_id}` : `area:${task.area}`);
+  const [priority, setPriority] = useState<TaskPriority>(task.priority);
+  const [dueDate, setDueDate] = useState(task.due_date ?? '');
+  const [saving, setSaving] = useState(false);
+  const isProject = destination.startsWith('project:');
+  const isCoros = Boolean(task.coros_metadata);
+  return <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <Card className="editor-dialog" role="dialog" aria-modal="true" aria-labelledby={`edit-${task.id}`}><form onSubmit={async (event) => {
+      event.preventDefault();
+      if (!title.trim()) return;
+      setSaving(true);
+      const projectId = isProject ? destination.slice('project:'.length) : null;
+      const area = isProject ? 'projects' : destination.slice('area:'.length) as Area;
+      await onSave({ title: title.trim(), task_type: isProject ? 'project_subtask' : isCoros ? 'daily' : behavior, area, project_id: projectId, priority, due_date: dueDate || null });
+      setSaving(false);
+    }}>
+      <div className="dialog-head"><div><p className="eyebrow">Task controls</p><h2 id={`edit-${task.id}`}>Edit commitment</h2></div><Button type="button" variant="ghost" size="icon" onClick={onClose}><X /></Button></div>
+      <label>Task name<Input value={title} maxLength={300} onChange={(event) => setTitle(event.target.value)} autoFocus required /></label>
+      <div className="editor-grid">
+        <label>Move to<select value={destination} onChange={(event) => setDestination(event.target.value)}>
+          <option value="area:today">Today</option><option value="area:health">Health</option><option value="area:personal">Personal / Home</option><option value="area:work">Work Life</option>
+          {projects.filter((project) => !project.archived_at).map((project) => <option value={`project:${project.id}`} key={project.id}>Project · {project.name}</option>)}
+        </select></label>
+        <label>Behavior<select value={isProject ? 'project_subtask' : behavior} disabled={isProject || isCoros} onChange={(event) => setBehavior(event.target.value as TaskType)}><option value="daily">Daily To Do</option><option value="one_time">One-time</option>{isProject && <option value="project_subtask">Project task</option>}</select></label>
+        <label>Priority<select value={priority} onChange={(event) => setPriority(event.target.value as TaskPriority)}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option></select></label>
+        <label>Due date<Input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
+      </div>
+      {isCoros && <p className="dialog-note">This is a COROS-linked daily task. Its health rule will stay connected when you rename or move it.</p>}
+      <div className="dialog-actions"><Button type="button" variant="ghost" className="danger-button" onClick={() => void onDelete()}><Trash2 /> Delete</Button><span /><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</Button></div>
+    </form></Card>
+  </div>;
 }
 
 function HealthView(props: ViewProps) {
@@ -545,30 +702,52 @@ function AreaView({ title, description, area, icon: Icon, ...props }: ViewProps 
     <div className="area-grid">
       <Card className="panel"><SectionHead title="Open" detail={`${open.length} pending`} /><CardContent>
         <form className="quick-add" onSubmit={(event) => { event.preventDefault(); if (newTitle.trim()) { void props.addTask(newTitle.trim(), 'one_time', area); setNewTitle(''); } }}><Input value={newTitle} onChange={(event) => setNewTitle(event.target.value)} placeholder={`Add to ${title}`} /><Button type="submit" className="primary-button"><Plus /> Add</Button></form>
-        <TaskList tasks={open} data={props.data} day={props.day} onToggle={props.toggleTask} />
+        <TaskList tasks={open} data={props.data} day={props.day} onToggle={props.toggleTask} projects={props.data.projects} onUpdate={props.updateTask} onDelete={props.deleteTask} />
       </CardContent></Card>
-      <Card className="panel archive-panel"><SectionHead title="Tasks Done" detail={`${done.length} archived`} /><CardContent><TaskList tasks={done} data={props.data} day={props.day} onToggle={props.toggleTask} compact empty="Completed one-time tasks will stay here." /></CardContent></Card>
+      <Card className="panel archive-panel"><SectionHead title="Tasks Done" detail={`${done.length} completed`} /><CardContent><TaskList tasks={done} data={props.data} day={props.day} onToggle={props.toggleTask} projects={props.data.projects} onUpdate={props.updateTask} onDelete={props.deleteTask} compact empty="Completed one-time tasks will stay here." /></CardContent></Card>
     </div>
   </>;
 }
 
 function ProjectsView(props: ViewProps) {
+  const [adding, setAdding] = useState(false);
+  const active = props.data.projects.filter((project) => !project.archived_at);
+  const archived = props.data.projects.filter((project) => project.archived_at);
   return <>
-    <PageIntro eyebrow="The work behind the work" title="Other Big Projects" copy="Every big project is a collection of clear next steps." />
-    <div className="project-grid">{props.data.projects.map((project, index) => <ProjectCard key={project.id} project={project} index={index} {...props} />)}</div>
+    <PageIntro eyebrow="The work behind the work" title="Other Big Projects" copy="Every big project is a collection of clear next steps." action={<Button className="primary-button" onClick={() => setAdding(true)}><FolderPlus /> New project</Button>} />
+    {adding && <ProjectEditor title="Create a project" onClose={() => setAdding(false)} onSave={async (name, description) => { await props.addProject(name, description); setAdding(false); }} />}
+    {active.length ? <div className="project-grid">{active.map((project, index) => <ProjectCard key={project.id} project={project} index={index} {...props} />)}</div> : <Card className="panel"><CardContent><div className="empty-state"><FolderKanban /><p>No active projects yet. Create one when something needs more than a single task.</p></div></CardContent></Card>}
+    {archived.length > 0 && <Card className="panel archived-projects"><SectionHead title="Archived projects" detail={`${archived.length} saved`} /><CardContent>{archived.map((project) => <div className="archived-project-row" key={project.id}><div><strong>{project.name}</strong><small>{project.completed_at ? 'Completed project' : 'Archived project'}</small></div><Button variant="ghost" onClick={() => void props.updateProject(project.id, { archived_at: null })}><Undo2 /> Restore</Button></div>)}</CardContent></Card>}
   </>;
 }
 
 function ProjectCard({ project, index, ...props }: ViewProps & { project: Project; index: number }) {
   const [title, setTitle] = useState('');
+  const [editing, setEditing] = useState(false);
   const tasks = props.data.tasks.filter((task) => task.project_id === project.id && task.status !== 'archived');
   const done = tasks.filter((task) => isTaskDone(task, props.data, props.day)).length;
-  return <Card className={`project-card project-tone-${index % 3}`}><CardContent>
-    <div className="project-top"><span className="project-number">0{index + 1}</span><span>{done}/{tasks.length} complete</span></div>
+  return <><Card className={`project-card project-tone-${index % 3} ${project.completed_at ? 'project-completed' : ''}`}><CardContent>
+    <div className="project-top"><span className="project-number">0{index + 1}</span><div className="project-card-actions"><span>{done}/{tasks.length} tasks</span><button type="button" aria-label={`Edit ${project.name}`} onClick={() => setEditing(true)}><MoreHorizontal /></button></div></div>
     <h2>{project.name}</h2><p>{project.description}</p><div className="project-progress"><span style={{ width: `${tasks.length ? (done / tasks.length) * 100 : 0}%` }} /></div>
-    <TaskList tasks={tasks} data={props.data} day={props.day} onToggle={props.toggleTask} compact />
+    {project.completed_at && <div className="project-complete-note"><CheckCircle2 /> Project marked complete</div>}
+    <TaskList tasks={tasks} data={props.data} day={props.day} onToggle={props.toggleTask} projects={props.data.projects} onUpdate={props.updateTask} onDelete={props.deleteTask} compact />
     <form className="project-add" onSubmit={(event) => { event.preventDefault(); if (title.trim()) { void props.addTask(title.trim(), 'project_subtask', 'projects', project.id); setTitle(''); } }}><Input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Add a project task" /><Button type="submit" size="icon" className="primary-button" aria-label="Add project task"><Plus /></Button></form>
-  </CardContent></Card>;
+    <div className="project-footer-actions"><Button variant="ghost" onClick={() => void props.updateProject(project.id, { completed_at: project.completed_at ? null : new Date().toISOString() })}>{project.completed_at ? <Undo2 /> : <CheckCircle2 />}{project.completed_at ? 'Reopen' : 'Complete'}</Button><Button variant="ghost" onClick={() => { if (window.confirm(`Archive “${project.name}”? Its tasks and history will be kept.`)) void props.updateProject(project.id, { archived_at: new Date().toISOString() }); }}><Archive /> Archive</Button></div>
+  </CardContent></Card>
+  {editing && <ProjectEditor title="Edit project" initialName={project.name} initialDescription={project.description ?? ''} onClose={() => setEditing(false)} onSave={async (name, description) => { await props.updateProject(project.id, { name, description: description || null }); setEditing(false); }} />}
+  </>;
+}
+
+function ProjectEditor({ title, initialName = '', initialDescription = '', onClose, onSave }: { title: string; initialName?: string; initialDescription?: string; onClose: () => void; onSave: (name: string, description: string) => Promise<void> }) {
+  const [name, setName] = useState(initialName);
+  const [description, setDescription] = useState(initialDescription);
+  const [saving, setSaving] = useState(false);
+  return <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><Card className="editor-dialog project-editor" role="dialog" aria-modal="true"><form onSubmit={async (event) => { event.preventDefault(); if (!name.trim()) return; setSaving(true); await onSave(name.trim(), description.trim()); setSaving(false); }}>
+    <div className="dialog-head"><div><p className="eyebrow">Project controls</p><h2>{title}</h2></div><Button type="button" variant="ghost" size="icon" onClick={onClose}><X /></Button></div>
+    <label>Project name<Input value={name} maxLength={160} onChange={(event) => setName(event.target.value)} autoFocus required /></label>
+    <label>Description<textarea value={description} maxLength={600} rows={4} onChange={(event) => setDescription(event.target.value)} placeholder="What does done look like?" /></label>
+    <div className="dialog-actions"><span /><span /><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving…' : 'Save project'}</Button></div>
+  </form></Card></div>;
 }
 
 const focusModes = [

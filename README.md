@@ -83,6 +83,18 @@ Do this only after GitHub Pages has given you the real Life OS address.
 
 This URL configuration tells Supabase which Life OS webpages it is allowed to return you to after an authentication email or sign-in flow. Because email confirmation is currently OFF, it is not required for creating the first local test account.
 
+## Task and project controls upgrade
+
+Before publishing the task-controls update, run `supabase/task-controls-migration.sql` once in **Supabase → SQL Editor**. It keeps every existing task and project, adds a separate project-completion timestamp, and is safe to run again.
+
+The update adds:
+
+- task rename, delete confirmation, category/project moves, priority and due date
+- mouse and touch drag reordering with up/down button fallbacks
+- project creation, rename, completion/reopen, archive and restore
+
+Open a task's `…` button to edit it. Open **Other Big Projects** to manage project-level controls.
+
 ## Phase 2 acceptance test
 
 1. Sign into the same account on Mac and phone.

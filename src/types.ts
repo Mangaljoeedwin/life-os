@@ -12,6 +12,7 @@ export interface Task {
   status: TaskStatus;
   priority: 'low' | 'normal' | 'high';
   sort_order: number;
+  due_date: string | null;
   coros_metadata: Record<string, unknown> | null;
   completed_at: string | null;
   created_at: string;
@@ -66,6 +67,7 @@ export interface Project {
   name: string;
   description: string | null;
   sort_order: number;
+  completed_at: string | null;
   archived_at: string | null;
 }
 

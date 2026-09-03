@@ -26,6 +26,7 @@ create table public.projects (
   name text not null check (char_length(name) between 1 and 160),
   description text,
   sort_order integer not null default 0,
+  completed_at timestamptz,
   archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),

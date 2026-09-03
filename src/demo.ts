@@ -9,13 +9,13 @@ const dayKey = (offset = 0) => {
 };
 
 export const demoProjects: Project[] = [
-  { id: 'project-imaginarium', user_id: userId, name: 'OGs Imaginarium', description: 'Build the plan and bring the right people together.', sort_order: 0, archived_at: null },
-  { id: 'project-aquascaping', user_id: userId, name: 'Aquascaping', description: 'Create a calmer, healthier aquarium setup.', sort_order: 1, archived_at: null },
-  { id: 'project-mural', user_id: userId, name: 'Draw A Mural', description: 'Make steady creative progress.', sort_order: 2, archived_at: null },
+  { id: 'project-imaginarium', user_id: userId, name: 'OGs Imaginarium', description: 'Build the plan and bring the right people together.', sort_order: 0, completed_at: null, archived_at: null },
+  { id: 'project-aquascaping', user_id: userId, name: 'Aquascaping', description: 'Create a calmer, healthier aquarium setup.', sort_order: 1, completed_at: null, archived_at: null },
+  { id: 'project-mural', user_id: userId, name: 'Draw A Mural', description: 'Make steady creative progress.', sort_order: 2, completed_at: null, archived_at: null },
 ];
 
 const task = (id: string, title: string, taskType: Task['task_type'], area: Task['area'], order: number, projectId: string | null = null, coros: Record<string, unknown> | null = null): Task => ({
-  id, user_id: userId, title, task_type: taskType, area, project_id: projectId, status: 'open', priority: 'normal', sort_order: order, coros_metadata: coros, completed_at: null, created_at: now,
+  id, user_id: userId, title, task_type: taskType, area, project_id: projectId, status: 'open', priority: 'normal', sort_order: order, due_date: null, coros_metadata: coros, completed_at: null, created_at: now,
 });
 
 export const makeDemoData = (): LifeData => ({
