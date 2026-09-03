@@ -27,7 +27,10 @@ function singleFileBuild(): Plugin {
           delete bundle[fileName];
         }
         if (item.type === 'asset' && fileName.endsWith('.css')) {
-          const css = typeof item.source === 'string' ? item.source : new TextDecoder().decode(item.source);
+          const compiledCss = typeof item.source === 'string' ? item.source : new TextDecoder().decode(item.source);
+          // CSS normally lives in an assets folder. Once it is inlined into index.html,
+          // public-file URLs need to be relative to the page instead.
+          const css = compiledCss.replaceAll('url(../life-os-background.svg)', 'url(./life-os-background.svg)');
           html = html.replace(
             new RegExp(`<link[^>]+href=["']\\.?/?${fileName.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}["'][^>]*>`),
             () => `<style>${css}</style>`,
