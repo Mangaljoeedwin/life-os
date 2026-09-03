@@ -64,6 +64,7 @@ const tabs: { id: Tab; label: string; short: string; icon: typeof Home }[] = [
 ];
 
 const todayIn = (timeZone: string) => new Date().toLocaleDateString('en-CA', { timeZone });
+const dateIn = (value: string, timeZone: string) => new Date(value).toLocaleDateString('en-CA', { timeZone });
 const prettyToday = (timeZone: string) => new Intl.DateTimeFormat('en-IN', {
   weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone,
 }).format(new Date());
@@ -429,34 +430,57 @@ function isTaskDone(task: Task, data: LifeData, day: string) {
 }
 
 function TodayView(props: ViewProps & { greeting: string }) {
-  const [reordering, setReordering] = useState(false);
   const { data, day } = props;
   const activeTasks = data.tasks.filter((task) => task.status !== 'archived');
-  const done = activeTasks.filter((task) => isTaskDone(task, data, day));
-  const open = activeTasks.filter((task) => !isTaskDone(task, data, day));
+  const incompleteTasks = activeTasks.filter((task) => !isTaskDone(task, data, day));
+  const activeProjectIds = new Set(data.projects.filter((project) => !project.completed_at && !project.archived_at).map((project) => project.id));
+  const openDaily = incompleteTasks.filter((task) => task.task_type === 'daily');
+  const openOneTime = incompleteTasks.filter((task) => task.task_type === 'one_time');
+  const openProjectTasks = incompleteTasks.filter((task) => task.task_type === 'project_subtask' && task.project_id && activeProjectIds.has(task.project_id));
+  const open = [...openDaily, ...openOneTime, ...openProjectTasks];
+  const doneToday = activeTasks.filter((task) => {
+    if (!isTaskDone(task, data, day)) return false;
+    if (task.task_type === 'daily') return true;
+    return Boolean(task.completed_at && dateIn(task.completed_at, data.settings.timezone) === day);
+  });
   const daily = activeTasks.filter((task) => task.task_type === 'daily');
   const dailyDone = daily.filter((task) => isTaskDone(task, data, day)).length;
   return <>
     <PageIntro eyebrow={prettyToday(data.settings.timezone)} title={props.greeting} />
     <section className="summary-grid">
-      <SummaryCard label="Today" value={`${open.length} open`} detail={`${done.length} completed`} tone="lavender" icon={Check} />
+      <SummaryCard label="Today" value={`${open.length} open`} detail={`${doneToday.length} completed`} tone="lavender" icon={Check} />
       <SummaryCard label="Daily completion" value={`${daily.length ? Math.round((dailyDone / daily.length) * 100) : 0}%`} detail={`${dailyDone} of ${daily.length} daily items`} tone="mint" icon={BarChart3} />
       <SummaryCard label="Focus" value={`${props.data.focusSessions.filter((item) => item.completed_at?.startsWith(day)).length} sessions`} detail="Recorded today" tone="peach" icon={Clock3} />
       <SummaryCard label="Sync" value={hasSupabaseConfig ? 'Live' : 'Preview'} detail={hasSupabaseConfig ? 'Across your devices' : 'Connect Supabase next'} tone="blue" icon={Cloud} />
     </section>
     <AddTaskForm projects={data.projects} onAdd={props.addTask} />
     <section className="today-layout">
-      <Card className="panel task-panel"><SectionHead title="Daily To Do" detail={`${open.length} remaining`} action={<button className={`reorder-toggle ${reordering ? 'active' : ''}`} onClick={() => setReordering((current) => !current)}>{reordering ? 'Done' : 'Reorder'}</button>} />
-        <CardContent><p className="panel-note">Daily items start fresh by date. COROS-linked items update after the morning and night syncs.</p><TaskList tasks={open} data={data} day={day} onToggle={props.toggleTask} projects={data.projects} onUpdate={props.updateTask} onDelete={props.deleteTask} reordering={reordering} onReorder={props.reorderTasks} /></CardContent>
+      <Card className="panel task-panel"><SectionHead title="To Do" detail={`${open.length} remaining`} />
+        <CardContent className="todo-groups">
+          <ToDoGroup title="Daily’s" note="Starts fresh each day. COROS-linked items update after your scheduled syncs." tasks={openDaily} empty="No daily items waiting." {...props} />
+          <ToDoGroup title="One Time" note="Single tasks that stay completed after you finish them." tasks={openOneTime} empty="No one-time tasks waiting." {...props} />
+          <ToDoGroup title="Project Tasks" note="Next steps from your active projects." tasks={openProjectTasks} empty="No project tasks waiting." {...props} />
+        </CardContent>
       </Card>
       <div className="side-stack">
         <BodyMiniCard data={data} onSave={props.addWeight} />
-        <Card className="panel"><SectionHead title="Completed today" detail={`${done.length} done`} />
-          <CardContent><TaskList tasks={done} data={data} day={day} onToggle={props.toggleTask} projects={data.projects} onUpdate={props.updateTask} onDelete={props.deleteTask} compact empty="Nothing completed yet — the first check is the hardest." /></CardContent>
+        <Card className="panel"><SectionHead title="Completed Today" detail={`${doneToday.length} done`} />
+          <CardContent><TaskList tasks={doneToday} data={data} day={day} onToggle={props.toggleTask} projects={data.projects} onUpdate={props.updateTask} onDelete={props.deleteTask} compact empty="Nothing completed yet — the first check is the hardest." /></CardContent>
         </Card>
       </div>
     </section>
   </>;
+}
+
+function ToDoGroup({ title, note, tasks, empty, ...props }: ViewProps & { title: string; note: string; tasks: Task[]; empty: string }) {
+  const [reordering, setReordering] = useState(false);
+  return <section className="todo-group">
+    <div className="todo-group-head">
+      <div><h3>{title}</h3><p>{note}</p></div>
+      <div className="todo-group-actions"><span>{tasks.length}</span><button className={`reorder-toggle ${reordering ? 'active' : ''}`} onClick={() => setReordering((current) => !current)} disabled={tasks.length < 2}>{reordering ? 'Done' : 'Reorder'}</button></div>
+    </div>
+    <TaskList tasks={tasks} data={props.data} day={props.day} onToggle={props.toggleTask} projects={props.data.projects} onUpdate={props.updateTask} onDelete={props.deleteTask} reordering={reordering} onReorder={props.reorderTasks} empty={empty} />
+  </section>;
 }
 
 function SummaryCard({ label, value, detail, tone, icon: Icon }: { label: string; value: string; detail: string; tone: string; icon: typeof Check }) {
@@ -540,6 +564,7 @@ function TaskList({ tasks, data, day, onToggle, projects, onUpdate, onDelete, co
       const completion = completionFor(task, data, day);
       const progress = synced ? corosProgress(task, data, day) : null;
       const overdue = Boolean(task.due_date && task.due_date < day && !done);
+      const project = task.project_id ? projects.find((item) => item.id === task.project_id) : null;
       return <div
         className={`task-row ${done ? 'done' : ''} ${reordering ? 'reordering' : ''} ${draggedId === task.id ? 'dragging' : ''}`}
         data-task-id={task.id}
@@ -562,6 +587,7 @@ function TaskList({ tasks, data, day, onToggle, projects, onUpdate, onDelete, co
         ><GripVertical /></button> : <button className="check-button" aria-label={`${done ? 'Reopen' : 'Complete'} ${task.title}`} onClick={() => void onToggle(task)}>{done && <Check />}</button>}
         <div className="task-copy"><strong>{task.title}</strong><div className="task-meta">
           <span>{task.task_type === 'daily' ? 'Daily To Do' : task.task_type === 'project_subtask' ? 'Project task' : done ? 'Completed' : 'One-time'}</span>
+          {project && <span>{project.name}</span>}
           {task.priority !== 'normal' && <span className={`priority-tag ${task.priority}`}>{task.priority} priority</span>}
           {task.due_date && <span className={`due-tag ${overdue ? 'overdue' : ''}`}><CalendarDays /> {task.due_date === day ? 'Due today' : task.due_date}</span>}
           {synced && <span className={`sync-tag ${completion?.source === 'coros' ? 'verified' : ''}`}><RefreshCw /> {completion?.source === 'coros' ? 'COROS verified' : progress}</span>}
