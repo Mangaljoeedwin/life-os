@@ -105,7 +105,7 @@ Before publishing the Focus update:
 4. Click **Run** once.
 5. Supabase should show a success message. The query does not delete or replace existing tasks or Focus history.
 
-After the migration, tapping a task's name opens the Focus setup window. The checkbox still completes the task and the `…` button still edits it. Running and paused timers are stored in Supabase, so the timer survives a refresh and appears on another signed-in device.
+After the migration, the small play button beside a task opens the Focus setup window. The checkbox still completes the task and the `…` button still edits it. Running and paused timers are stored in Supabase, so the timer survives a refresh and appears on another signed-in device.
 
 Paste a YouTube video or playlist address into **Focus → Use focus music** to save the default music. Browsers may require one tap on the visible YouTube player before sound starts.
 

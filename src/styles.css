@@ -60,7 +60,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .main-content { width: min(1420px, calc(100% - 40px)); margin: 0 auto; padding: 52px 0 96px; }
 .setup-banner, .error-banner { display: flex; align-items: center; gap: 10px; margin: -30px 0 30px; padding: 11px 15px; border: 1px solid #d5c9db; border-radius: 13px; background: #eee8f1; color: var(--plum-dark); font-size: 13px; }
 .setup-banner svg { flex: 0 0 auto; }
-.error-banner { justify-content: space-between; border-color: #e5b8b1; background: #f8e4e0; color: #7e342d; }
+.error-banner { position: fixed; z-index: 1000; top: 74px; left: 50%; width: min(680px, calc(100% - 28px)); margin: 0; justify-content: space-between; transform: translateX(-50%); border-color: #e5b8b1; background: #f8e4e0; color: #7e342d; box-shadow: 0 14px 40px rgba(83,40,35,.18); }
 .error-banner button { border: 0; background: transparent; cursor: pointer; }
 .page-intro { display: flex; justify-content: space-between; align-items: end; gap: 28px; margin-bottom: 30px; }
 .page-intro h1 { margin: 5px 0 7px; font-family: Georgia, "Times New Roman", serif; font-size: clamp(36px, 4.6vw, 68px); font-weight: 500; line-height: .98; letter-spacing: -.045em; }

@@ -129,6 +129,21 @@ function LoadingScreen() {
   return <main className="loading-page"><RefreshCw className="spin" /><p>Opening your Life OS…</p></main>;
 }
 
+function readableDataError(message: string) {
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes('focus_music_url') ||
+    normalized.includes('phase_started_at') ||
+    normalized.includes('phase_ends_at') ||
+    normalized.includes('paused_seconds') ||
+    normalized.includes('music_url') ||
+    normalized.includes('invalid input value for enum focus_status')
+  ) {
+    return 'Focus setup is not finished in Supabase. Run the complete focus-mode-migration.sql file in Supabase → SQL Editor, then try again.';
+  }
+  return message;
+}
+
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(!hasSupabaseConfig);
@@ -154,9 +169,8 @@ export function App() {
       supabase.from('coros_activities').select('*').order('started_at', { ascending: false }).limit(100),
     ]);
     const failure = [tasks, completions, projects, weights, sessions, settings, corosMetrics, corosActivities].find((result) => result.error);
-    if (failure?.error) setError(failure.error.message);
+    if (failure?.error) setError(readableDataError(failure.error.message));
     else {
-      setError('');
       setData({
         tasks: (tasks.data ?? []) as Task[],
         completions: completions.data ?? [],
@@ -314,7 +328,7 @@ export function App() {
 
   async function startFocusSession(taskId: string | null, modeIndex: number, musicUrl: string | null) {
     const existing = data.focusSessions.find((item) => ['running', 'paused', 'awaiting_outcome'].includes(item.status));
-    if (existing) { setFocusSetupTask(null); setTab('focus'); return; }
+    if (existing) { setFocusSetupTask(null); setTab('focus'); return true; }
     const mode = focusModes[modeIndex] ?? focusModes[0];
     const started = new Date();
     const record: FocusSession = {
@@ -324,13 +338,15 @@ export function App() {
       phase_started_at: started.toISOString(), phase_ends_at: new Date(started.getTime() + mode.work * 60000).toISOString(),
       paused_seconds: null, music_url: musicUrl,
     };
-    setData((current) => ({ ...current, focusSessions: [record, ...current.focusSessions] }));
     if (supabase) {
       const { error: saveError } = await supabase.from('focus_sessions').insert(record);
-      if (saveError) { setError(saveError.message); void loadData(); return; }
+      if (saveError) { setError(readableDataError(saveError.message)); return false; }
     }
+    setData((current) => ({ ...current, focusSessions: [record, ...current.focusSessions] }));
+    setError('');
     setFocusSetupTask(null);
     setTab('focus');
+    return true;
   }
 
   async function updateFocusSession(sessionId: string, patch: Partial<FocusSession>) {
@@ -342,11 +358,13 @@ export function App() {
   }
 
   async function saveFocusMusic(url: string | null) {
+    if (data.settings.focus_music_url === url) return true;
     setData((current) => ({ ...current, settings: { ...current.settings, focus_music_url: url } }));
     if (supabase) {
       const { error: saveError } = await supabase.from('user_settings').update({ focus_music_url: url }).eq('user_id', userId);
-      if (saveError) { setError(saveError.message); void loadData(); }
+      if (saveError) { setError(readableDataError(saveError.message)); void loadData(); return false; }
     }
+    return true;
   }
 
   async function pauseFocusSession(session: FocusSession) {
@@ -454,7 +472,7 @@ export function App() {
       </aside></div>}
 
       <main className="main-content">
-        {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError('')}><X size={16} /></button></div>}
+        {error && <div className="error-banner" role="alert"><span>{error}</span><button aria-label="Dismiss message" onClick={() => setError('')}><X size={16} /></button></div>}
         {!hasSupabaseConfig && <div className="setup-banner"><Cloud size={18} /><span>You’re viewing a fully interactive preview. Add your Supabase credentials to turn on private cross-device sync.</span></div>}
         {tab === 'today' && <TodayView {...shared} greeting={greetingTemplates[greetingIndex](displayName)} />}
         {tab === 'health' && <HealthView {...shared} />}
@@ -510,12 +528,12 @@ type ViewProps = {
   activeFocus: FocusSession | null;
   prepareFocus: (task: Task) => void;
   openFocus: () => void;
-  startFocusSession: (taskId: string | null, modeIndex: number, musicUrl: string | null) => Promise<void>;
+  startFocusSession: (taskId: string | null, modeIndex: number, musicUrl: string | null) => Promise<boolean>;
   pauseFocusSession: (session: FocusSession) => Promise<void>;
   resumeFocusSession: (session: FocusSession) => Promise<void>;
   cancelFocusSession: (session: FocusSession) => Promise<void>;
   resolveFocusSession: (session: FocusSession, outcome: 'complete' | 'keep_open' | 'add_time') => Promise<void>;
-  saveFocusMusic: (url: string | null) => Promise<void>;
+  saveFocusMusic: (url: string | null) => Promise<boolean>;
 };
 
 function PageIntro({ eyebrow, title, copy, action }: { eyebrow: string; title: string; copy?: string; action?: React.ReactNode }) {
@@ -929,7 +947,7 @@ function youtubeEmbedUrl(value: string | null) {
   } catch { return null; }
 }
 
-function FocusSetup({ task, defaultMusicUrl, onClose, onSaveMusic, onStart }: { task: Task; defaultMusicUrl: string | null; onClose: () => void; onSaveMusic: (url: string | null) => Promise<void>; onStart: ViewProps['startFocusSession'] }) {
+function FocusSetup({ task, defaultMusicUrl, onClose, onSaveMusic, onStart }: { task: Task; defaultMusicUrl: string | null; onClose: () => void; onSaveMusic: ViewProps['saveFocusMusic']; onStart: ViewProps['startFocusSession'] }) {
   const [modeIndex, setModeIndex] = useState(0);
   const [useMusic, setUseMusic] = useState(Boolean(defaultMusicUrl));
   const [musicUrl, setMusicUrl] = useState(defaultMusicUrl ?? '');
@@ -946,8 +964,8 @@ function FocusSetup({ task, defaultMusicUrl, onClose, onSaveMusic, onStart }: { 
       const selectedMusic = useMusic && musicUrl.trim() ? musicUrl.trim() : null;
       if (selectedMusic && !youtubeEmbedUrl(selectedMusic)) { setError('Please paste a valid YouTube video or playlist link.'); return; }
       setStarting(true);
-      await onSaveMusic(selectedMusic);
-      await onStart(task.id, modeIndex, selectedMusic);
+      const musicSaved = await onSaveMusic(selectedMusic);
+      if (musicSaved) await onStart(task.id, modeIndex, selectedMusic);
       setStarting(false);
     }}><Play /> {starting ? 'Starting…' : 'Start Focus'}</Button></div>
   </CardContent></Card></div>;
@@ -982,8 +1000,8 @@ function FocusView(props: ViewProps) {
       {!session && <div className="timer-actions"><Button variant="outline" onClick={() => { setTaskId(''); setModeIndex(0); }}><RotateCcw /> Reset</Button><Button className="primary-button start-button" onClick={async () => {
         const selectedMusic = useMusic && musicUrl.trim() ? musicUrl.trim() : null;
         if (selectedMusic && !youtubeEmbedUrl(selectedMusic)) { setMusicError('Please paste a valid YouTube video or playlist link.'); return; }
-        await props.saveFocusMusic(selectedMusic);
-        await props.startFocusSession(taskId || null, modeIndex, selectedMusic);
+        const musicSaved = await props.saveFocusMusic(selectedMusic);
+        if (musicSaved) await props.startFocusSession(taskId || null, modeIndex, selectedMusic);
       }}><Play /> Start</Button></div>}
       {session?.status === 'running' && <div className="timer-actions"><Button variant="outline" onClick={() => void props.cancelFocusSession(session)}><X /> End</Button><Button className="primary-button start-button" onClick={() => void props.pauseFocusSession(session)}><Pause /> Pause</Button></div>}
       {session?.status === 'paused' && <div className="timer-actions"><Button variant="outline" onClick={() => void props.cancelFocusSession(session)}><X /> End</Button><Button className="primary-button start-button" onClick={() => void props.resumeFocusSession(session)}><Play /> Resume</Button></div>}
