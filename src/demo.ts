@@ -63,5 +63,5 @@ export const makeDemoData = (): LifeData => ({
     { id: 'activity-walk', user_id: userId, coros_activity_id: 'demo-walk', activity_date: dayKey(), activity_type: 'Walk', started_at: now, duration_seconds: 3020, distance_km: 4.2, jump_count: null, calories: 260 },
     { id: 'activity-skips', user_id: userId, coros_activity_id: 'demo-skips', activity_date: dayKey(), activity_type: 'Jump Rope', started_at: now, duration_seconds: 760, distance_km: null, jump_count: 1120, calories: 120 },
   ],
-  settings: { user_id: userId, display_name: 'Mangal', timezone: 'Asia/Kolkata', height_cm: 178, weight_goal_kg: 88, weight_goal_date: '2026-12-25' },
+  settings: { user_id: userId, display_name: 'Mangal', timezone: 'Asia/Kolkata', height_cm: 178, weight_goal_kg: 88, weight_goal_date: '2026-12-25', focus_music_url: null },
 });

@@ -95,6 +95,20 @@ The update adds:
 
 Open a task's `…` button to edit it. Open **Other Big Projects** to manage project-level controls.
 
+## Focus timer upgrade
+
+Before publishing the Focus update:
+
+1. Open **Supabase → SQL Editor → New query**.
+2. Open `supabase/focus-mode-migration.sql` from this Life OS folder.
+3. Copy everything in that file and paste it into the Supabase query.
+4. Click **Run** once.
+5. Supabase should show a success message. The query does not delete or replace existing tasks or Focus history.
+
+After the migration, tapping a task's name opens the Focus setup window. The checkbox still completes the task and the `…` button still edits it. Running and paused timers are stored in Supabase, so the timer survives a refresh and appears on another signed-in device.
+
+Paste a YouTube video or playlist address into **Focus → Use focus music** to save the default music. Browsers may require one tap on the visible YouTube player before sound starts.
+
 ## Phase 2 acceptance test
 
 1. Sign into the same account on Mac and phone.
@@ -110,8 +124,8 @@ Open a task's `…` button to edit it. Open **Other Big Projects** to manage pro
 - `daily_completions`: date-specific completion history and manual/COROS source
 - `projects`: project containers
 - `weight_entries`: one manual measurement per user per date
-- `focus_sessions`: completed focus blocks and task links
-- `user_settings`: timezone, height and weight goal
+- `focus_sessions`: running, paused and completed focus blocks with task links
+- `user_settings`: timezone, height, weight goal and default Focus music link
 - `coros_daily_metrics`: daily sleep, steps, calories, exercise minutes and sync status
 - `coros_activities`: individual activities used for the single-walk and single-jump-rope rules
 

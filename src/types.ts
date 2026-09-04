@@ -90,7 +90,12 @@ export interface FocusSession {
   actual_seconds: number;
   started_at: string;
   completed_at: string | null;
-  status: 'completed' | 'cancelled';
+  status: 'running' | 'paused' | 'awaiting_outcome' | 'completed' | 'cancelled';
+  phase: 'work' | 'break';
+  phase_started_at: string | null;
+  phase_ends_at: string | null;
+  paused_seconds: number | null;
+  music_url: string | null;
 }
 
 export interface UserSettings {
@@ -100,6 +105,7 @@ export interface UserSettings {
   height_cm: number;
   weight_goal_kg: number;
   weight_goal_date: string;
+  focus_music_url: string | null;
 }
 
 export interface LifeData {

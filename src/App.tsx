@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
   Archive,
@@ -23,6 +23,7 @@ import {
   LogOut,
   Menu,
   MoreHorizontal,
+  Music2,
   Moon,
   Pause,
   Play,
@@ -136,6 +137,7 @@ export function App() {
   const [error, setError] = useState('');
   const [tab, setTab] = useState<Tab>('today');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [focusSetupTask, setFocusSetupTask] = useState<Task | null>(null);
   const [greetingIndex, setGreetingIndex] = useState(() => Math.floor(Math.random() * greetingTemplates.length));
 
   const loadData = useCallback(async (showLoadingScreen = false) => {
@@ -310,12 +312,79 @@ export function App() {
     }
   }
 
-  async function addFocus(sessionData: Omit<FocusSession, 'id' | 'user_id'>) {
-    const record: FocusSession = { id: uid(), user_id: userId, ...sessionData };
+  async function startFocusSession(taskId: string | null, modeIndex: number, musicUrl: string | null) {
+    const existing = data.focusSessions.find((item) => ['running', 'paused', 'awaiting_outcome'].includes(item.status));
+    if (existing) { setFocusSetupTask(null); setTab('focus'); return; }
+    const mode = focusModes[modeIndex] ?? focusModes[0];
+    const started = new Date();
+    const record: FocusSession = {
+      id: uid(), user_id: userId, task_id: taskId, mode: mode.label,
+      planned_work_minutes: mode.work, planned_break_minutes: mode.break, actual_seconds: 0,
+      started_at: started.toISOString(), completed_at: null, status: 'running', phase: 'work',
+      phase_started_at: started.toISOString(), phase_ends_at: new Date(started.getTime() + mode.work * 60000).toISOString(),
+      paused_seconds: null, music_url: musicUrl,
+    };
     setData((current) => ({ ...current, focusSessions: [record, ...current.focusSessions] }));
     if (supabase) {
       const { error: saveError } = await supabase.from('focus_sessions').insert(record);
-      if (saveError) setError(saveError.message);
+      if (saveError) { setError(saveError.message); void loadData(); return; }
+    }
+    setFocusSetupTask(null);
+    setTab('focus');
+  }
+
+  async function updateFocusSession(sessionId: string, patch: Partial<FocusSession>) {
+    setData((current) => ({ ...current, focusSessions: current.focusSessions.map((item) => item.id === sessionId ? { ...item, ...patch } : item) }));
+    if (supabase) {
+      const { error: saveError } = await supabase.from('focus_sessions').update(patch).eq('id', sessionId);
+      if (saveError) { setError(saveError.message); void loadData(); }
+    }
+  }
+
+  async function saveFocusMusic(url: string | null) {
+    setData((current) => ({ ...current, settings: { ...current.settings, focus_music_url: url } }));
+    if (supabase) {
+      const { error: saveError } = await supabase.from('user_settings').update({ focus_music_url: url }).eq('user_id', userId);
+      if (saveError) { setError(saveError.message); void loadData(); }
+    }
+  }
+
+  async function pauseFocusSession(session: FocusSession) {
+    if (session.status !== 'running' || !session.phase_ends_at) return;
+    const now = Date.now();
+    const remaining = Math.max(0, Math.ceil((new Date(session.phase_ends_at).getTime() - now) / 1000));
+    const elapsed = session.phase === 'work' && session.phase_started_at
+      ? Math.max(0, Math.floor((now - new Date(session.phase_started_at).getTime()) / 1000)) : 0;
+    await updateFocusSession(session.id, { status: 'paused', paused_seconds: remaining, phase_ends_at: null, actual_seconds: session.actual_seconds + elapsed });
+  }
+
+  async function resumeFocusSession(session: FocusSession) {
+    if (session.status !== 'paused') return;
+    const now = new Date();
+    const remaining = session.paused_seconds ?? 0;
+    await updateFocusSession(session.id, { status: 'running', phase_started_at: now.toISOString(), phase_ends_at: new Date(now.getTime() + remaining * 1000).toISOString(), paused_seconds: null });
+  }
+
+  async function cancelFocusSession(session: FocusSession) {
+    const now = new Date();
+    const elapsed = session.status === 'running' && session.phase === 'work' && session.phase_started_at
+      ? Math.max(0, Math.floor((now.getTime() - new Date(session.phase_started_at).getTime()) / 1000)) : 0;
+    await updateFocusSession(session.id, { status: 'cancelled', actual_seconds: session.actual_seconds + elapsed, completed_at: now.toISOString(), phase_ends_at: null, paused_seconds: null });
+  }
+
+  async function resolveFocusSession(session: FocusSession, outcome: 'complete' | 'keep_open' | 'add_time') {
+    if (outcome === 'add_time') {
+      const now = new Date();
+      await updateFocusSession(session.id, { status: 'running', phase: 'work', phase_started_at: now.toISOString(), phase_ends_at: new Date(now.getTime() + 15 * 60000).toISOString(), paused_seconds: null });
+      return;
+    }
+    const task = session.task_id ? data.tasks.find((item) => item.id === session.task_id) : null;
+    if (outcome === 'complete' && task && !task.coros_metadata && !isTaskDone(task, data, day)) await toggleTask(task);
+    const now = new Date();
+    if (session.planned_break_minutes > 0) {
+      await updateFocusSession(session.id, { status: 'running', phase: 'break', phase_started_at: now.toISOString(), phase_ends_at: new Date(now.getTime() + session.planned_break_minutes * 60000).toISOString(), paused_seconds: null });
+    } else {
+      await updateFocusSession(session.id, { status: 'completed', completed_at: now.toISOString(), phase_ends_at: null, paused_seconds: null });
     }
   }
 
@@ -335,16 +404,38 @@ export function App() {
     }
   }
 
+  const activeFocus = data.focusSessions.find((item) => ['running', 'paused', 'awaiting_outcome'].includes(item.status)) ?? null;
+  useEffect(() => {
+    if (!activeFocus || activeFocus.status !== 'running' || !activeFocus.phase_ends_at) return;
+    const remainingMs = new Date(activeFocus.phase_ends_at).getTime() - Date.now();
+    const timer = window.setTimeout(() => {
+      if (activeFocus.phase === 'work') {
+        const segmentSeconds = activeFocus.phase_started_at
+          ? Math.max(0, Math.round((new Date(activeFocus.phase_ends_at!).getTime() - new Date(activeFocus.phase_started_at).getTime()) / 1000)) : 0;
+        void updateFocusSession(activeFocus.id, { status: 'awaiting_outcome', actual_seconds: activeFocus.actual_seconds + segmentSeconds, phase_ends_at: null, paused_seconds: 0 });
+      } else {
+        void updateFocusSession(activeFocus.id, { status: 'completed', completed_at: new Date().toISOString(), phase_ends_at: null, paused_seconds: null });
+      }
+    }, Math.max(0, remainingMs) + 100);
+    return () => window.clearTimeout(timer);
+  }, [activeFocus?.id, activeFocus?.status, activeFocus?.phase, activeFocus?.phase_ends_at]);
+
   if (!authReady) return <LoadingScreen />;
   if (hasSupabaseConfig && !session) return <AuthScreen />;
   if (loading) return <LoadingScreen />;
 
   const displayName = data.settings.display_name ?? '';
-  const shared = { data, day, toggleTask, addTask, updateTask, deleteTask, reorderTasks, addProject, updateProject, addWeight, addFocus };
+  const shared = {
+    data, day, toggleTask, addTask, updateTask, deleteTask, reorderTasks, addProject, updateProject, addWeight,
+    activeFocus, prepareFocus: (task: Task) => { if (activeFocus) setTab('focus'); else setFocusSetupTask(task); },
+    openFocus: () => setTab('focus'), startFocusSession, pauseFocusSession, resumeFocusSession,
+    cancelFocusSession, resolveFocusSession, saveFocusMusic,
+  };
   const needsName = Boolean(session && !session.user.user_metadata?.display_name);
   return (
     <div className="app-shell">
       {needsName && <NamePrompt onSave={saveDisplayName} />}
+      {focusSetupTask && <FocusSetup task={focusSetupTask} defaultMusicUrl={data.settings.focus_music_url} onClose={() => setFocusSetupTask(null)} onSaveMusic={saveFocusMusic} onStart={startFocusSession} />}
       <header className="topbar">
         <button className="brand" onClick={() => setTab('today')}><span className="brand-mark"><img src="./life-os-avatar.png" alt="" /></span><span>Life OS</span></button>
         <nav className="desktop-nav" aria-label="Primary navigation">
@@ -416,7 +507,15 @@ type ViewProps = {
   addProject: (name: string, description: string) => Promise<void>;
   updateProject: (projectId: string, patch: Partial<Pick<Project, 'name' | 'description' | 'completed_at' | 'archived_at'>>) => Promise<void>;
   addWeight: (weight: number) => Promise<void>;
-  addFocus: (session: Omit<FocusSession, 'id' | 'user_id'>) => Promise<void>;
+  activeFocus: FocusSession | null;
+  prepareFocus: (task: Task) => void;
+  openFocus: () => void;
+  startFocusSession: (taskId: string | null, modeIndex: number, musicUrl: string | null) => Promise<void>;
+  pauseFocusSession: (session: FocusSession) => Promise<void>;
+  resumeFocusSession: (session: FocusSession) => Promise<void>;
+  cancelFocusSession: (session: FocusSession) => Promise<void>;
+  resolveFocusSession: (session: FocusSession, outcome: 'complete' | 'keep_open' | 'add_time') => Promise<void>;
+  saveFocusMusic: (url: string | null) => Promise<void>;
 };
 
 function PageIntro({ eyebrow, title, copy, action }: { eyebrow: string; title: string; copy?: string; action?: React.ReactNode }) {
@@ -450,13 +549,14 @@ function TodayView(props: ViewProps & { greeting: string }) {
     <section className="summary-grid">
       <SummaryCard label="Today" value={`${open.length} open`} detail={`${doneToday.length} completed`} tone="lavender" icon={Check} />
       <SummaryCard label="Daily completion" value={`${daily.length ? Math.round((dailyDone / daily.length) * 100) : 0}%`} detail={`${dailyDone} of ${daily.length} daily items`} tone="mint" icon={BarChart3} />
-      <SummaryCard label="Focus" value={`${props.data.focusSessions.filter((item) => item.completed_at?.startsWith(day)).length} sessions`} detail="Recorded today" tone="peach" icon={Clock3} />
+      <FocusSummaryCard session={props.activeFocus} tasks={data.tasks} onOpen={props.openFocus} />
       <SummaryCard label="Sync" value={hasSupabaseConfig ? 'Live' : 'Preview'} detail={hasSupabaseConfig ? 'Across your devices' : 'Connect Supabase next'} tone="blue" icon={Cloud} />
     </section>
     <AddTaskForm projects={data.projects} onAdd={props.addTask} />
     <section className="today-layout">
       <Card className="panel task-panel"><SectionHead title="To Do" detail={`${open.length} remaining`} />
         <CardContent className="todo-groups">
+          <p className="todo-focus-hint"><Play /> Tap a task to prepare a Focus session. Use the checkbox when it is done and … to edit.</p>
           <ToDoGroup title="Daily’s" note="Starts fresh each day. COROS-linked items update after your scheduled syncs." tasks={openDaily} empty="No daily items waiting." {...props} />
           <ToDoGroup title="One Time" note="Single tasks that stay completed after you finish them." tasks={openOneTime} empty="No one-time tasks waiting." {...props} />
           <ToDoGroup title="Project Tasks" note="Next steps from your active projects." tasks={openProjectTasks} empty="No project tasks waiting." {...props} />
@@ -479,12 +579,43 @@ function ToDoGroup({ title, note, tasks, empty, ...props }: ViewProps & { title:
       <div><h3>{title}</h3><p>{note}</p></div>
       <div className="todo-group-actions"><span>{tasks.length}</span><button className={`reorder-toggle ${reordering ? 'active' : ''}`} onClick={() => setReordering((current) => !current)} disabled={tasks.length < 2}>{reordering ? 'Done' : 'Reorder'}</button></div>
     </div>
-    <TaskList tasks={tasks} data={props.data} day={props.day} onToggle={props.toggleTask} projects={props.data.projects} onUpdate={props.updateTask} onDelete={props.deleteTask} reordering={reordering} onReorder={props.reorderTasks} empty={empty} />
+    <TaskList tasks={tasks} data={props.data} day={props.day} onToggle={props.toggleTask} projects={props.data.projects} onUpdate={props.updateTask} onDelete={props.deleteTask} onFocusTask={props.prepareFocus} reordering={reordering} onReorder={props.reorderTasks} empty={empty} />
   </section>;
 }
 
 function SummaryCard({ label, value, detail, tone, icon: Icon }: { label: string; value: string; detail: string; tone: string; icon: typeof Check }) {
   return <Card className={`summary-card ${tone}`}><CardContent><span className="summary-icon"><Icon /></span><p>{label}</p><strong>{value}</strong><small>{detail}</small></CardContent></Card>;
+}
+
+function focusSecondsLeft(session: FocusSession | null, now: number) {
+  if (!session) return 0;
+  if (session.status === 'paused') return session.paused_seconds ?? 0;
+  if (session.status !== 'running' || !session.phase_ends_at) return 0;
+  return Math.max(0, Math.ceil((new Date(session.phase_ends_at).getTime() - now) / 1000));
+}
+
+function useFocusSeconds(session: FocusSession | null) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    setNow(Date.now());
+    if (session?.status !== 'running') return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [session?.id, session?.status, session?.phase_ends_at]);
+  return focusSecondsLeft(session, now);
+}
+
+function clockText(seconds: number) {
+  return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function FocusSummaryCard({ session, tasks, onOpen }: { session: FocusSession | null; tasks: Task[]; onOpen: () => void }) {
+  const seconds = useFocusSeconds(session);
+  const task = session?.task_id ? tasks.find((item) => item.id === session.task_id) : null;
+  const label = session?.status === 'awaiting_outcome' ? 'Session complete' : session?.status === 'paused' ? 'Focus paused' : session?.phase === 'break' ? 'Break timer' : 'Focus timer';
+  const value = session ? session.status === 'awaiting_outcome' ? 'Review' : clockText(seconds) : 'Ready';
+  const detail = session ? `${task?.title ?? 'Open focus'} · Tap to open` : 'Tap a task to begin';
+  return <button type="button" className="focus-summary-button" onClick={onOpen} aria-label="Open Focus timer"><SummaryCard label={label} value={value} detail={detail} tone="peach" icon={Clock3} /></button>;
 }
 
 function AddTaskForm({ projects, onAdd }: { projects: Project[]; onAdd: ViewProps['addTask'] }) {
@@ -528,6 +659,7 @@ type TaskListProps = {
   projects: Project[];
   onUpdate: ViewProps['updateTask'];
   onDelete: ViewProps['deleteTask'];
+  onFocusTask?: ViewProps['prepareFocus'];
   compact?: boolean;
   empty?: string;
   reordering?: boolean;
@@ -543,7 +675,7 @@ function moveId(ids: string[], taskId: string, targetIndex: number) {
   return next;
 }
 
-function TaskList({ tasks, data, day, onToggle, projects, onUpdate, onDelete, compact = false, empty = 'No tasks here yet.', reordering = false, onReorder }: TaskListProps) {
+function TaskList({ tasks, data, day, onToggle, projects, onUpdate, onDelete, onFocusTask, compact = false, empty = 'No tasks here yet.', reordering = false, onReorder }: TaskListProps) {
   const [editing, setEditing] = useState<Task | null>(null);
   const [orderedIds, setOrderedIds] = useState(() => tasks.map((task) => task.id));
   const [draggedId, setDraggedId] = useState<string | null>(null);
@@ -585,13 +717,19 @@ function TaskList({ tasks, data, day, onToggle, projects, onUpdate, onDelete, co
           onPointerUp={finishReorder}
           onPointerCancel={finishReorder}
         ><GripVertical /></button> : <button className="check-button" aria-label={`${done ? 'Reopen' : 'Complete'} ${task.title}`} onClick={() => void onToggle(task)}>{done && <Check />}</button>}
-        <div className="task-copy"><strong>{task.title}</strong><div className="task-meta">
+        {onFocusTask && !reordering ? <button type="button" className="task-copy task-focus-target" onClick={() => onFocusTask(task)} aria-label={`Focus on ${task.title}`}><strong>{task.title}</strong><div className="task-meta">
           <span>{task.task_type === 'daily' ? 'Daily To Do' : task.task_type === 'project_subtask' ? 'Project task' : done ? 'Completed' : 'One-time'}</span>
           {project && <span>{project.name}</span>}
           {task.priority !== 'normal' && <span className={`priority-tag ${task.priority}`}>{task.priority} priority</span>}
           {task.due_date && <span className={`due-tag ${overdue ? 'overdue' : ''}`}><CalendarDays /> {task.due_date === day ? 'Due today' : task.due_date}</span>}
           {synced && <span className={`sync-tag ${completion?.source === 'coros' ? 'verified' : ''}`}><RefreshCw /> {completion?.source === 'coros' ? 'COROS verified' : progress}</span>}
-        </div></div>
+        </div></button> : <div className="task-copy"><strong>{task.title}</strong><div className="task-meta">
+          <span>{task.task_type === 'daily' ? 'Daily To Do' : task.task_type === 'project_subtask' ? 'Project task' : done ? 'Completed' : 'One-time'}</span>
+          {project && <span>{project.name}</span>}
+          {task.priority !== 'normal' && <span className={`priority-tag ${task.priority}`}>{task.priority} priority</span>}
+          {task.due_date && <span className={`due-tag ${overdue ? 'overdue' : ''}`}><CalendarDays /> {task.due_date === day ? 'Due today' : task.due_date}</span>}
+          {synced && <span className={`sync-tag ${completion?.source === 'coros' ? 'verified' : ''}`}><RefreshCw /> {completion?.source === 'coros' ? 'COROS verified' : progress}</span>}
+        </div></div>}
         <div className="task-row-actions">
           {reordering && onReorder ? <div className="reorder-controls"><button disabled={index === 0} aria-label={`Move ${task.title} up`} onClick={() => { const next = moveId(orderedIds, task.id, index - 1); setOrderedIds(next); void onReorder(next); }}><ArrowUp /></button><button disabled={index === orderedTasks.length - 1} aria-label={`Move ${task.title} down`} onClick={() => { const next = moveId(orderedIds, task.id, index + 1); setOrderedIds(next); void onReorder(next); }}><ArrowDown /></button></div> : <>
             {task.task_type !== 'daily' && done && <Archive className="archive-icon" />}
@@ -782,42 +920,86 @@ const focusModes = [
   { label: 'Full reset', work: 90, break: 30 },
 ];
 
+function youtubeEmbedUrl(value: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    const host = url.hostname.replace(/^www\./, '');
+    if (!['youtube.com', 'm.youtube.com', 'youtu.be', 'music.youtube.com'].includes(host)) return null;
+    const videoId = host === 'youtu.be' ? url.pathname.split('/').filter(Boolean)[0] : url.searchParams.get('v');
+    const playlistId = url.searchParams.get('list');
+    if (videoId) return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?autoplay=1&playsinline=1${playlistId ? `&list=${encodeURIComponent(playlistId)}` : ''}`;
+    if (playlistId) return `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(playlistId)}&autoplay=1&playsinline=1`;
+    return null;
+  } catch { return null; }
+}
+
+function FocusSetup({ task, defaultMusicUrl, onClose, onSaveMusic, onStart }: { task: Task; defaultMusicUrl: string | null; onClose: () => void; onSaveMusic: (url: string | null) => Promise<void>; onStart: ViewProps['startFocusSession'] }) {
+  const [modeIndex, setModeIndex] = useState(0);
+  const [useMusic, setUseMusic] = useState(Boolean(defaultMusicUrl));
+  const [musicUrl, setMusicUrl] = useState(defaultMusicUrl ?? '');
+  const [error, setError] = useState('');
+  const [starting, setStarting] = useState(false);
+  return <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><Card className="editor-dialog focus-setup" role="dialog" aria-modal="true" aria-labelledby="focus-setup-title"><CardContent>
+    <div className="dialog-head"><div><p className="eyebrow">Do now</p><h2 id="focus-setup-title">{task.title}</h2></div><Button type="button" variant="ghost" size="icon" onClick={onClose}><X /></Button></div>
+    <p className="dialog-lead">How much focused time does this need?</p>
+    <div className="mode-pills setup-modes">{focusModes.map((item, index) => <button type="button" className={modeIndex === index ? 'active' : ''} onClick={() => setModeIndex(index)} key={`${item.work}-${item.break}`}>{item.work}/{item.break}</button>)}</div>
+    <label className="music-toggle"><input type="checkbox" checked={useMusic} onChange={(event) => setUseMusic(event.target.checked)} /><Music2 /> Use focus music</label>
+    {useMusic && <label className="music-url-label">YouTube video or playlist<Input value={musicUrl} onChange={(event) => { setMusicUrl(event.target.value); setError(''); }} placeholder="Paste a YouTube link" /></label>}
+    {error && <p className="field-error">{error}</p>}
+    <div className="focus-setup-actions"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="button" className="primary-button" disabled={starting} onClick={async () => {
+      const selectedMusic = useMusic && musicUrl.trim() ? musicUrl.trim() : null;
+      if (selectedMusic && !youtubeEmbedUrl(selectedMusic)) { setError('Please paste a valid YouTube video or playlist link.'); return; }
+      setStarting(true);
+      await onSaveMusic(selectedMusic);
+      await onStart(task.id, modeIndex, selectedMusic);
+      setStarting(false);
+    }}><Play /> {starting ? 'Starting…' : 'Start Focus'}</Button></div>
+  </CardContent></Card></div>;
+}
+
 function FocusView(props: ViewProps) {
   const [modeIndex, setModeIndex] = useState(0);
-  const mode = focusModes[modeIndex];
   const [taskId, setTaskId] = useState('');
-  const [seconds, setSeconds] = useState(mode.work * 60);
-  const [running, setRunning] = useState(false);
-  const [phase, setPhase] = useState<'work' | 'break'>('work');
-  const startedAt = useRef<string | null>(null);
-  const total = (phase === 'work' ? mode.work : mode.break) * 60;
-  useEffect(() => { setSeconds(mode.work * 60); setRunning(false); setPhase('work'); startedAt.current = null; }, [modeIndex, mode.work]);
-  useEffect(() => {
-    if (!running) return;
-    const timer = window.setInterval(() => setSeconds((current) => Math.max(0, current - 1)), 1000);
-    return () => window.clearInterval(timer);
-  }, [running]);
-  useEffect(() => {
-    if (seconds !== 0 || !running) return;
-    setRunning(false);
-    if (phase === 'work') {
-      const ended = new Date().toISOString();
-      void props.addFocus({ task_id: taskId || null, mode: mode.label, planned_work_minutes: mode.work, planned_break_minutes: mode.break, actual_seconds: mode.work * 60, started_at: startedAt.current ?? ended, completed_at: ended, status: 'completed' });
-      setPhase('break'); setSeconds(mode.break * 60);
-    } else { setPhase('work'); setSeconds(mode.work * 60); startedAt.current = null; }
-  }, [seconds, running, phase, mode, taskId, props]);
-  const reset = () => { setRunning(false); setPhase('work'); setSeconds(mode.work * 60); startedAt.current = null; };
-  const pct = Math.max(0, Math.min(100, ((total - seconds) / total) * 100));
-  const openTasks = props.data.tasks.filter((task) => task.status === 'open');
+  const [useMusic, setUseMusic] = useState(Boolean(props.data.settings.focus_music_url));
+  const [musicUrl, setMusicUrl] = useState(props.data.settings.focus_music_url ?? '');
+  const [musicError, setMusicError] = useState('');
+  const session = props.activeFocus;
+  const seconds = useFocusSeconds(session);
+  const displaySeconds = session ? seconds : focusModes[modeIndex].work * 60;
+  const task = session?.task_id ? props.data.tasks.find((item) => item.id === session.task_id) : null;
+  const total = session ? (session.phase === 'work' ? session.planned_work_minutes : session.planned_break_minutes) * 60 : focusModes[modeIndex].work * 60;
+  const pct = session ? Math.max(0, Math.min(100, ((total - seconds) / Math.max(1, total)) * 100)) : 0;
+  const openTasks = props.data.tasks.filter((item) => item.status === 'open');
+  const history = props.data.focusSessions.filter((item) => ['completed', 'cancelled'].includes(item.status));
+  const embedUrl = youtubeEmbedUrl(session?.music_url ?? null);
+  const phaseLabel = session?.status === 'awaiting_outcome' ? 'complete' : session?.status === 'paused' ? 'paused' : session?.phase ?? 'work';
   return <>
     <PageIntro eyebrow="Choose the session that fits the task" title="Focus" copy="Start small when a task feels heavy. Stay longer when flow arrives." />
     <div className="focus-layout"><Card className="focus-card"><CardContent>
-      <div className="mode-pills">{focusModes.map((item, index) => <button className={modeIndex === index ? 'active' : ''} onClick={() => setModeIndex(index)} key={`${item.work}-${item.break}`}>{item.work}/{item.break}</button>)}</div>
-      <label className="focus-task-label">Task<select value={taskId} onChange={(event) => setTaskId(event.target.value)}><option value="">Choose a task</option>{openTasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select></label>
-      <div className={`timer-ring ${phase}`} style={{ '--progress': `${pct * 3.6}deg` } as React.CSSProperties}><div><span>{phase}</span><strong>{String(Math.floor(seconds / 60)).padStart(2, '0')}:{String(seconds % 60).padStart(2, '0')}</strong><small>{mode.label}</small></div></div>
-      <div className="timer-actions"><Button variant="outline" onClick={reset}><RotateCcw /> Reset</Button><Button className="primary-button start-button" onClick={() => { if (!startedAt.current) startedAt.current = new Date().toISOString(); setRunning(!running); }}>{running ? <Pause /> : <Play />}{running ? 'Pause' : 'Start'}</Button></div>
+      {!session && <>
+        <div className="mode-pills">{focusModes.map((item, index) => <button className={modeIndex === index ? 'active' : ''} onClick={() => setModeIndex(index)} key={`${item.work}-${item.break}`}>{item.work}/{item.break}</button>)}</div>
+        <label className="focus-task-label">Task<select value={taskId} onChange={(event) => setTaskId(event.target.value)}><option value="">Choose a task</option>{openTasks.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
+        <div className="focus-music-settings"><label className="music-toggle"><input type="checkbox" checked={useMusic} onChange={(event) => setUseMusic(event.target.checked)} /><Music2 /> Use focus music</label>{useMusic && <Input value={musicUrl} onChange={(event) => { setMusicUrl(event.target.value); setMusicError(''); }} placeholder="Paste a YouTube video or playlist link" />}{musicError && <p className="field-error">{musicError}</p>}</div>
+      </>}
+      {session && <div className="active-focus-task"><span>{session.phase === 'break' ? 'Break after' : session.status === 'awaiting_outcome' ? 'Session finished' : 'Focusing on'}</span><strong>{task?.title ?? 'Open focus'}</strong></div>}
+      <div className={`timer-ring ${session?.phase ?? 'work'}`} style={{ '--progress': `${pct * 3.6}deg` } as React.CSSProperties}><div><span>{phaseLabel}</span><strong>{session?.status === 'awaiting_outcome' ? 'Done' : clockText(displaySeconds)}</strong><small>{session?.mode ?? focusModes[modeIndex].label}</small></div></div>
+      {!session && <div className="timer-actions"><Button variant="outline" onClick={() => { setTaskId(''); setModeIndex(0); }}><RotateCcw /> Reset</Button><Button className="primary-button start-button" onClick={async () => {
+        const selectedMusic = useMusic && musicUrl.trim() ? musicUrl.trim() : null;
+        if (selectedMusic && !youtubeEmbedUrl(selectedMusic)) { setMusicError('Please paste a valid YouTube video or playlist link.'); return; }
+        await props.saveFocusMusic(selectedMusic);
+        await props.startFocusSession(taskId || null, modeIndex, selectedMusic);
+      }}><Play /> Start</Button></div>}
+      {session?.status === 'running' && <div className="timer-actions"><Button variant="outline" onClick={() => void props.cancelFocusSession(session)}><X /> End</Button><Button className="primary-button start-button" onClick={() => void props.pauseFocusSession(session)}><Pause /> Pause</Button></div>}
+      {session?.status === 'paused' && <div className="timer-actions"><Button variant="outline" onClick={() => void props.cancelFocusSession(session)}><X /> End</Button><Button className="primary-button start-button" onClick={() => void props.resumeFocusSession(session)}><Play /> Resume</Button></div>}
+      {session?.status === 'awaiting_outcome' && <div className="focus-outcome"><h3>Did you finish {task ? `“${task.title}”` : 'what you planned'}?</h3>{task?.coros_metadata && <p>COROS will confirm this task automatically. Your focused time is still saved.</p>}<div>
+        {task && !task.coros_metadata && <Button className="primary-button" onClick={() => void props.resolveFocusSession(session, 'complete')}><Check /> Yes, complete it</Button>}
+        <Button variant="outline" onClick={() => void props.resolveFocusSession(session, 'keep_open')}>{task?.coros_metadata ? 'Continue to break' : 'Not yet'}</Button>
+        <Button variant="ghost" onClick={() => void props.resolveFocusSession(session, 'add_time')}><Plus /> Add 15 min</Button>
+      </div></div>}
+      {embedUrl && session && <div className="focus-music-player"><div><Music2 /><span>Focus music</span></div><iframe src={embedUrl} title="Focus music from YouTube" allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen /><small>If sound does not start automatically, tap Play once in the YouTube player.</small></div>}
     </CardContent></Card>
-    <Card className="panel focus-history"><SectionHead title="Session history" detail={`${props.data.focusSessions.length} saved`} /><CardContent>{props.data.focusSessions.length ? props.data.focusSessions.slice(0, 8).map((session) => <div className="session-row" key={session.id}><span className="session-icon"><TimerReset /></span><div><strong>{props.data.tasks.find((task) => task.id === session.task_id)?.title ?? 'Open focus'}</strong><small>{session.mode} · {session.planned_work_minutes} min</small></div><time>{new Date(session.started_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</time></div>) : <div className="empty-state"><Clock3 /><p>Your completed focus sessions will appear here.</p></div>}</CardContent></Card></div>
+    <Card className="panel focus-history"><SectionHead title="Session history" detail={`${history.length} saved`} /><CardContent>{history.length ? history.slice(0, 8).map((item) => <div className="session-row" key={item.id}><span className="session-icon"><TimerReset /></span><div><strong>{props.data.tasks.find((taskItem) => taskItem.id === item.task_id)?.title ?? 'Open focus'}</strong><small>{item.mode} · {item.planned_work_minutes} min</small></div><time>{new Date(item.started_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</time></div>) : <div className="empty-state"><Clock3 /><p>Your completed focus sessions will appear here.</p></div>}</CardContent></Card></div>
   </>;
 }
 

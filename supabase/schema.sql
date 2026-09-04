@@ -7,7 +7,7 @@ create type public.task_type as enum ('daily', 'one_time', 'project_subtask');
 create type public.task_area as enum ('today', 'health', 'personal', 'work', 'projects');
 create type public.task_status as enum ('open', 'completed', 'archived');
 create type public.completion_source as enum ('manual', 'coros', 'system');
-create type public.focus_status as enum ('completed', 'cancelled');
+create type public.focus_status as enum ('running', 'paused', 'awaiting_outcome', 'completed', 'cancelled');
 
 create table public.user_settings (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -16,6 +16,7 @@ create table public.user_settings (
   height_cm numeric(5,2) not null default 178 check (height_cm between 50 and 300),
   weight_goal_kg numeric(5,2) not null default 88 check (weight_goal_kg between 20 and 500),
   weight_goal_date date not null default '2026-12-25',
+  focus_music_url text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -87,6 +88,11 @@ create table public.focus_sessions (
   started_at timestamptz not null,
   completed_at timestamptz,
   status public.focus_status not null default 'completed',
+  phase text not null default 'work' check (phase in ('work', 'break')),
+  phase_started_at timestamptz,
+  phase_ends_at timestamptz,
+  paused_seconds integer check (paused_seconds is null or paused_seconds >= 0),
+  music_url text,
   created_at timestamptz not null default now()
 );
 
