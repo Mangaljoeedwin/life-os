@@ -556,7 +556,7 @@ function TodayView(props: ViewProps & { greeting: string }) {
     <section className="today-layout">
       <Card className="panel task-panel"><SectionHead title="To Do" detail={`${open.length} remaining`} />
         <CardContent className="todo-groups">
-          <p className="todo-focus-hint"><Play /> Tap a task to prepare a Focus session. Use the checkbox when it is done and … to edit.</p>
+          <p className="todo-focus-hint"><Play /> Use the play button beside a task to start a Focus session.</p>
           <ToDoGroup title="Daily’s" note="Starts fresh each day. COROS-linked items update after your scheduled syncs." tasks={openDaily} empty="No daily items waiting." {...props} />
           <ToDoGroup title="One Time" note="Single tasks that stay completed after you finish them." tasks={openOneTime} empty="No one-time tasks waiting." {...props} />
           <ToDoGroup title="Project Tasks" note="Next steps from your active projects." tasks={openProjectTasks} empty="No project tasks waiting." {...props} />
@@ -717,22 +717,17 @@ function TaskList({ tasks, data, day, onToggle, projects, onUpdate, onDelete, on
           onPointerUp={finishReorder}
           onPointerCancel={finishReorder}
         ><GripVertical /></button> : <button className="check-button" aria-label={`${done ? 'Reopen' : 'Complete'} ${task.title}`} onClick={() => void onToggle(task)}>{done && <Check />}</button>}
-        {onFocusTask && !reordering ? <button type="button" className="task-copy task-focus-target" onClick={() => onFocusTask(task)} aria-label={`Focus on ${task.title}`}><strong>{task.title}</strong><div className="task-meta">
+        <div className="task-copy"><strong>{task.title}</strong><div className="task-meta">
           <span>{task.task_type === 'daily' ? 'Daily To Do' : task.task_type === 'project_subtask' ? 'Project task' : done ? 'Completed' : 'One-time'}</span>
           {project && <span>{project.name}</span>}
           {task.priority !== 'normal' && <span className={`priority-tag ${task.priority}`}>{task.priority} priority</span>}
           {task.due_date && <span className={`due-tag ${overdue ? 'overdue' : ''}`}><CalendarDays /> {task.due_date === day ? 'Due today' : task.due_date}</span>}
           {synced && <span className={`sync-tag ${completion?.source === 'coros' ? 'verified' : ''}`}><RefreshCw /> {completion?.source === 'coros' ? 'COROS verified' : progress}</span>}
-        </div></button> : <div className="task-copy"><strong>{task.title}</strong><div className="task-meta">
-          <span>{task.task_type === 'daily' ? 'Daily To Do' : task.task_type === 'project_subtask' ? 'Project task' : done ? 'Completed' : 'One-time'}</span>
-          {project && <span>{project.name}</span>}
-          {task.priority !== 'normal' && <span className={`priority-tag ${task.priority}`}>{task.priority} priority</span>}
-          {task.due_date && <span className={`due-tag ${overdue ? 'overdue' : ''}`}><CalendarDays /> {task.due_date === day ? 'Due today' : task.due_date}</span>}
-          {synced && <span className={`sync-tag ${completion?.source === 'coros' ? 'verified' : ''}`}><RefreshCw /> {completion?.source === 'coros' ? 'COROS verified' : progress}</span>}
-        </div></div>}
+        </div></div>
         <div className="task-row-actions">
           {reordering && onReorder ? <div className="reorder-controls"><button disabled={index === 0} aria-label={`Move ${task.title} up`} onClick={() => { const next = moveId(orderedIds, task.id, index - 1); setOrderedIds(next); void onReorder(next); }}><ArrowUp /></button><button disabled={index === orderedTasks.length - 1} aria-label={`Move ${task.title} down`} onClick={() => { const next = moveId(orderedIds, task.id, index + 1); setOrderedIds(next); void onReorder(next); }}><ArrowDown /></button></div> : <>
             {task.task_type !== 'daily' && done && <Archive className="archive-icon" />}
+            {onFocusTask && !done && <button type="button" className="task-menu-button task-focus-button" aria-label={`Start a Focus session for ${task.title}`} title="Start Focus" onClick={() => onFocusTask(task)}><Play /></button>}
             <button type="button" className="task-menu-button" aria-label={`Edit ${task.title}`} onClick={() => setEditing(task)}><MoreHorizontal /></button>
           </>}
         </div>
