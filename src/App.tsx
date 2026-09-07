@@ -1049,7 +1049,8 @@ function BodyView(props: ViewProps) {
     return dates;
   })();
   const milestoneRows = milestoneDates.map((date) => ({ date, forecast: forecastAt(date) }));
-  const tableDates = Array.from(new Set([...weights.map((entry) => entry.entry_date), ...milestoneDates.map((date) => new Date(date).toISOString().slice(0, 10))])).sort();
+  const localDateKey = (time: number) => { const date = new Date(time); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; };
+  const tableDates = Array.from(new Set([...weights.map((entry) => entry.entry_date), ...milestoneDates.map(localDateKey)])).sort();
   const actualByDate = new Map(weights.map((entry) => [entry.entry_date, Number(entry.weight_kg)]));
   const formatWeightDate = (date: string) => new Date(`${date}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
   const formatMilestoneDate = (date: number) => new Date(date).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
