@@ -574,10 +574,9 @@ function TodayView(props: ViewProps & { greeting: string }) {
     <section className="today-layout">
       <Card className="panel task-panel"><SectionHead title="To Do" detail={`${open.length} remaining`} />
         <CardContent className="todo-groups">
-          <p className="todo-focus-hint"><Play /> Use the play button beside a task to start a Focus session.</p>
-          <ToDoGroup title="Daily’s" note="Starts fresh each day. COROS-linked items update after your scheduled syncs." tasks={openDaily} empty="No daily items waiting." {...props} />
-          <ToDoGroup title="One Time" note="Single tasks that stay completed after you finish them." tasks={openOneTime} empty="No one-time tasks waiting." {...props} />
-          <ToDoGroup title="Project Tasks" note="Next steps from your active projects." tasks={openProjectTasks} empty="No project tasks waiting." {...props} />
+          <ToDoGroup title="Daily’s" tasks={openDaily} empty="No daily items waiting." {...props} />
+          <ToDoGroup title="One Time" tasks={openOneTime} empty="No one-time tasks waiting." {...props} />
+          <ToDoGroup title="Project Tasks" tasks={openProjectTasks} empty="No project tasks waiting." {...props} />
         </CardContent>
       </Card>
       <div className="side-stack">
@@ -590,11 +589,11 @@ function TodayView(props: ViewProps & { greeting: string }) {
   </>;
 }
 
-function ToDoGroup({ title, note, tasks, empty, ...props }: ViewProps & { title: string; note: string; tasks: Task[]; empty: string }) {
+function ToDoGroup({ title, note, tasks, empty, ...props }: ViewProps & { title: string; note?: string; tasks: Task[]; empty: string }) {
   const [reordering, setReordering] = useState(false);
   return <section className="todo-group">
     <div className="todo-group-head">
-      <div><h3>{title}</h3><p>{note}</p></div>
+      <div><h3>{title}</h3>{note && <p>{note}</p>}</div>
       <div className="todo-group-actions"><span>{tasks.length}</span><button className={`reorder-toggle ${reordering ? 'active' : ''}`} onClick={() => setReordering((current) => !current)} disabled={tasks.length < 2}>{reordering ? 'Done' : 'Reorder'}</button></div>
     </div>
     <TaskList tasks={tasks} data={props.data} day={props.day} onToggle={props.toggleTask} projects={props.data.projects} onUpdate={props.updateTask} onDelete={props.deleteTask} onFocusTask={props.prepareFocus} reordering={reordering} onReorder={props.reorderTasks} empty={empty} />
@@ -1035,10 +1034,29 @@ function BodyView(props: ViewProps) {
   const chartPoints = weights.map((entry) => ({ x: new Date(`${entry.entry_date}T00:00:00`).getTime(), y: Number(entry.weight_kg) }));
   const goalDate = new Date(`${data.settings.weight_goal_date}T00:00:00`).getTime();
   const minX = chartPoints[0]?.x ?? Date.now(); const maxX = Math.max(goalDate, Date.now() + 86400000);
-  const allY = [...chartPoints.map((p) => p.y), data.settings.weight_goal_kg]; const minY = Math.min(...allY) - 1; const maxY = Math.max(...allY) + 1;
+  const forecastStart = chartPoints[0] ?? { x: minX, y: current ?? 99 };
+  const forecastAt = (x: number) => forecastStart.y + ((data.settings.weight_goal_kg - forecastStart.y) * ((x - forecastStart.x) / Math.max(1, goalDate - forecastStart.x)));
+  const milestoneDates = (() => {
+    const dates: number[] = [];
+    const cursor = new Date(forecastStart.x);
+    cursor.setDate(1);
+    cursor.setMonth(cursor.getMonth() + 2);
+    while (cursor.getTime() < goalDate) {
+      dates.push(cursor.getTime());
+      cursor.setMonth(cursor.getMonth() + 2);
+    }
+    dates.push(goalDate);
+    return dates;
+  })();
+  const milestoneRows = milestoneDates.map((date) => ({ date, forecast: forecastAt(date) }));
+  const tableDates = Array.from(new Set([...weights.map((entry) => entry.entry_date), ...milestoneDates.map((date) => new Date(date).toISOString().slice(0, 10))])).sort();
+  const actualByDate = new Map(weights.map((entry) => [entry.entry_date, Number(entry.weight_kg)]));
+  const formatWeightDate = (date: string) => new Date(`${date}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  const formatMilestoneDate = (date: number) => new Date(date).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+  const allY = [...chartPoints.map((p) => p.y), ...milestoneRows.map((p) => p.forecast), data.settings.weight_goal_kg]; const minY = Math.min(...allY) - 1; const maxY = Math.max(...allY) + 1;
   const xy = (point: { x: number; y: number }) => ({ x: 48 + ((point.x - minX) / Math.max(1, maxX - minX)) * 612, y: 24 + ((maxY - point.y) / Math.max(1, maxY - minY)) * 210 });
   const path = chartPoints.map((point, index) => `${index ? 'L' : 'M'} ${xy(point).x} ${xy(point).y}`).join(' ');
-  const goalStart = chartPoints[0] ?? { x: Date.now(), y: current ?? 99 }; const g1 = xy(goalStart); const g2 = xy({ x: goalDate, y: data.settings.weight_goal_kg });
+  const g1 = xy(forecastStart); const g2 = xy({ x: goalDate, y: data.settings.weight_goal_kg });
   return <>
     <PageIntro eyebrow="Manual measurements, useful direction" title="Body Stats" copy="Track what changes over time without turning the number into the whole story." />
     <section className="summary-grid three">
@@ -1047,8 +1065,8 @@ function BodyView(props: ViewProps) {
       <SummaryCard label="Goal" value={`${data.settings.weight_goal_kg} kg`} detail={`By ${new Date(`${data.settings.weight_goal_date}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`} tone="mint" icon={Sparkles} />
     </section>
     <Card className="panel weight-panel"><div className="weight-panel-head"><div><p className="eyebrow">Weight trajectory</p><h2>Small changes, clear direction</h2></div><form className="weight-entry large" onSubmit={(event) => { event.preventDefault(); const parsed = Number(value); if (parsed > 0) { void props.addWeight(parsed); setValue(''); } }}><Input type="number" inputMode="decimal" min="30" max="300" step="0.1" value={value} onChange={(event) => setValue(event.target.value)} placeholder="Today’s kg" /><Button className="primary-button" type="submit">Save</Button></form></div><CardContent>
-      <div className="chart-wrap"><svg viewBox="0 0 700 270" role="img" aria-label="Weight entries and goal trajectory"><line x1="48" y1="234" x2="660" y2="234" className="axis"/><line x1={g1.x} y1={g1.y} x2={g2.x} y2={g2.y} className="goal-line"/><path d={path} className="weight-line"/>{chartPoints.map((point) => { const pos = xy(point); return <circle key={`${point.x}-${point.y}`} cx={pos.x} cy={pos.y} r="5" className="weight-dot"/>; })}<circle cx={g2.x} cy={g2.y} r="6" className="goal-dot"/><text x={Math.min(g2.x - 20, 610)} y={Math.max(g2.y - 12, 16)} className="chart-label">Goal {data.settings.weight_goal_kg} kg</text><text x="48" y="258" className="chart-date">{new Date(minX).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</text><text x="590" y="258" className="chart-date">25 Dec</text></svg></div>
-      <div className="weight-history">{weights.slice().reverse().slice(0, 6).map((entry) => <div key={entry.id}><span>{new Date(`${entry.entry_date}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</span><strong>{entry.weight_kg} kg</strong><small>Manual</small></div>)}</div>
+      <div className="chart-wrap"><svg viewBox="0 0 700 270" role="img" aria-label="Actual weight, forecast checkpoints and goal trajectory"><line x1="48" y1="234" x2="660" y2="234" className="axis"/><line x1={g1.x} y1={g1.y} x2={g2.x} y2={g2.y} className="goal-line"/>{milestoneRows.slice(0, -1).map((milestone) => { const pos = xy({ x: milestone.date, y: milestone.forecast }); return <g key={milestone.date}><line x1={pos.x} y1="24" x2={pos.x} y2="234" className="milestone-line"/><circle cx={pos.x} cy={pos.y} r="5" className="milestone-dot"/><text x={pos.x} y="17" textAnchor="middle" className="milestone-label">{formatMilestoneDate(milestone.date)}</text></g>; })}<path d={path} className="weight-line"/>{chartPoints.map((point) => { const pos = xy(point); return <circle key={`${point.x}-${point.y}`} cx={pos.x} cy={pos.y} r="5" className="weight-dot"/>; })}<circle cx={g2.x} cy={g2.y} r="6" className="goal-dot"/><text x={Math.min(g2.x - 20, 610)} y={Math.max(g2.y - 12, 16)} className="chart-label">Goal {data.settings.weight_goal_kg} kg</text><text x="48" y="258" className="chart-date">{new Date(minX).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</text><text x="590" y="258" className="chart-date">{new Date(goalDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</text></svg></div>
+      <div className="weight-table-wrap"><table className="weight-table"><thead><tr><th>Date</th><th>Forecast</th><th>Actual</th><th>Delta</th></tr></thead><tbody>{tableDates.map((date) => { const actual = actualByDate.get(date); const forecast = forecastAt(new Date(`${date}T00:00:00`).getTime()); const delta = actual === undefined ? null : actual - forecast; return <tr key={date}><th scope="row">{formatWeightDate(date)}</th><td>{forecast.toFixed(1)} kg</td><td>{actual === undefined ? <span className="muted-cell">—</span> : `${actual.toFixed(1)} kg`}</td><td className={delta === null ? 'muted-cell' : delta <= 0 ? 'delta-ahead' : 'delta-behind'}>{delta === null ? '—' : `${delta > 0 ? '+' : ''}${delta.toFixed(1)} kg`}</td></tr>; })}</tbody></table></div>
     </CardContent></Card>
   </>;
 }
