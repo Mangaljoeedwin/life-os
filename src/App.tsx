@@ -562,13 +562,17 @@ function TodayView(props: ViewProps & { greeting: string }) {
   });
   const daily = activeTasks.filter((task) => task.task_type === 'daily');
   const dailyDone = daily.filter((task) => isTaskDone(task, data, day)).length;
+  const latestCorosSync = [...data.corosMetrics].filter((metric) => metric.last_synced_at).sort((a, b) => b.last_synced_at.localeCompare(a.last_synced_at))[0];
+  const syncDetail = latestCorosSync
+    ? `Last sync at ${formatSyncTime(latestCorosSync.last_synced_at)} · ${capitalize(latestCorosSync.latest_run_type)} · ${latestCorosSync.latest_run_type === 'manual' ? 'Manual' : 'Scheduled'}`
+    : 'No COROS sync received yet';
   return <>
     <PageIntro eyebrow={prettyToday(data.settings.timezone)} title={props.greeting} />
     <section className="summary-grid">
       <SummaryCard label="Today" value={`${open.length} open`} detail={`${doneToday.length} completed`} tone="lavender" icon={Check} />
       <SummaryCard label="Daily completion" value={`${daily.length ? Math.round((dailyDone / daily.length) * 100) : 0}%`} detail={`${dailyDone} of ${daily.length} daily items`} tone="mint" icon={BarChart3} />
       <FocusSummaryCard session={props.activeFocus} tasks={data.tasks} onOpen={props.openFocus} />
-      <SummaryCard label="Sync" value={hasSupabaseConfig ? 'Live' : 'Preview'} detail={hasSupabaseConfig ? 'Across your devices' : 'Connect Supabase next'} tone="blue" icon={Cloud} />
+      <SummaryCard label="Sync" value={hasSupabaseConfig ? 'Live' : 'Preview'} detail={hasSupabaseConfig ? syncDetail : 'Connect Supabase next'} tone="blue" icon={Cloud} />
     </section>
     <AddTaskForm projects={data.projects} onAdd={props.addTask} />
     <section className="today-layout">
@@ -815,8 +819,58 @@ function HealthView(props: ViewProps) {
         </div>)}
       </div></div>
     </CardContent></Card>
+    <MonthlyHabitTracker data={props.data} timeZone={props.data.settings.timezone} />
     <Card className="panel coros-card"><CardContent><div className="coros-icon"><Dumbbell /></div><div><p className="eyebrow">Scheduled COROS connection</p><h2>Morning and night syncs update Life OS</h2><p>Steps and sleep use the day’s totals. Walking requires one Walk or Run of at least 5 km, and skipping requires one Jump Rope session of at least 1,000 jumps. Missing data stays marked “Awaiting sync”; manual tasks remain yours to tick.</p></div></CardContent></Card>
   </>;
+}
+
+function monthKey(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`; }
+function monthDateKey(year: number, month: number, day: number) { return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`; }
+
+function MonthlyHabitTracker({ data, timeZone }: { data: LifeData; timeZone: string }) {
+  const currentDate = new Date(`${todayIn(timeZone)}T12:00:00`);
+  const [selectedMonth, setSelectedMonth] = useState(() => monthKey(currentDate));
+  const selectedDate = new Date(`${selectedMonth}-01T12:00:00`);
+  const year = selectedDate.getFullYear();
+  const month = selectedDate.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const options = Array.from({ length: 12 }, (_, index) => {
+    const date = new Date(currentDate.getFullYear(), currentDate.getMonth() - index, 1, 12);
+    return { key: monthKey(date), label: new Intl.DateTimeFormat('en-IN', { month: 'long', year: 'numeric' }).format(date) };
+  });
+  const tracked = [
+    { label: 'Wake up', task: data.tasks.find((task) => task.task_type === 'daily' && task.title.toLowerCase().includes('wake up')) },
+    { label: '5 km walk', task: data.tasks.find((task) => task.task_type === 'daily' && task.coros_metadata?.metric === 'distance_km') },
+    { label: '10,000 steps', task: data.tasks.find((task) => task.task_type === 'daily' && task.coros_metadata?.metric === 'steps') },
+    { label: '1,000 skips', task: data.tasks.find((task) => task.task_type === 'daily' && task.coros_metadata?.metric === 'jump_count') },
+    { label: 'Sleep duration', task: data.tasks.find((task) => task.task_type === 'daily' && task.coros_metadata?.metric === 'sleep_duration_minutes') },
+  ];
+  const cx = 360; const cy = 360; const innerRadius = 104; const ringWidth = 34; const ringGap = 5;
+  const startAngle = -Math.PI / 2; const segmentAngle = (Math.PI * 2) / daysInMonth; const gap = Math.min(.025, segmentAngle * .22);
+  const polar = (radius: number, angle: number) => ({ x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius });
+  const sector = (dayIndex: number, ringIndex: number) => {
+    const outer = innerRadius + (ringIndex + 1) * ringWidth + ringIndex * ringGap;
+    const inner = outer - ringWidth;
+    const a0 = startAngle + dayIndex * segmentAngle + gap;
+    const a1 = startAngle + (dayIndex + 1) * segmentAngle - gap;
+    const p0 = polar(outer, a0); const p1 = polar(outer, a1); const p2 = polar(inner, a1); const p3 = polar(inner, a0);
+    return `M ${p0.x} ${p0.y} A ${outer} ${outer} 0 0 1 ${p1.x} ${p1.y} L ${p2.x} ${p2.y} A ${inner} ${inner} 0 0 0 ${p3.x} ${p3.y} Z`;
+  };
+  const todayKey = todayIn(timeZone);
+  const selectedLabel = options.find((option) => option.key === selectedMonth)?.label;
+  return <Card className="panel monthly-habit-panel"><div className="monthly-habit-head"><div><p className="eyebrow">Five essentials</p><h2>Monthly habit tracker</h2></div><label>Month<select value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)}>{options.map((option) => <option value={option.key} key={option.key}>{option.label}</option>)}</select></label></div><CardContent>
+    <div className="monthly-tracker-layout"><div className="monthly-chart-wrap"><svg viewBox="0 0 720 720" role="img" aria-label={`Monthly habit tracker for ${selectedLabel}`}>
+      <circle cx={cx} cy={cy} r={innerRadius - 13} className="monthly-tracker-core" />
+      {tracked.map((habit, habitIndex) => Array.from({ length: daysInMonth }, (_, dayIndex) => {
+        const date = monthDateKey(year, month, dayIndex + 1);
+        const completed = Boolean(habit.task && data.completions.find((item) => item.task_id === habit.task!.id && item.completion_date === date && item.is_completed));
+        const future = date > todayKey;
+        return <path key={`${habit.label}-${date}`} d={sector(dayIndex, habitIndex)} className={`monthly-segment ${completed ? 'checked' : ''} ${future ? 'future' : ''}`}><title>{`${habit.label} · ${date} · ${completed ? 'completed' : future ? 'upcoming' : 'not completed'}`}</title></path>;
+      }))}
+      {Array.from({ length: daysInMonth }, (_, dayIndex) => { const angle = startAngle + (dayIndex + .5) * segmentAngle; const position = polar(innerRadius + tracked.length * (ringWidth + ringGap) + 24, angle); return <text key={dayIndex} x={position.x} y={position.y} textAnchor="middle" dominantBaseline="middle" className="monthly-day-label">{dayIndex + 1}</text>; })}
+      <text x={cx} y={cy - 10} textAnchor="middle" className="monthly-month-label">{selectedLabel}</text><text x={cx} y={cy + 15} textAnchor="middle" className="monthly-month-copy">{tracked.filter((habit) => habit.task).length} habits tracked</text>
+    </svg></div><div className="monthly-habit-legend">{tracked.map((habit) => <div key={habit.label}><span /><strong>{habit.label}</strong>{!habit.task && <small>Task not found</small>}</div>)}</div></div>
+  </CardContent></Card>;
 }
 
 function completionFor(task: Task, data: LifeData, day: string): DailyCompletion | undefined {
