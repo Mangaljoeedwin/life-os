@@ -846,7 +846,7 @@ function MonthlyHabitTracker({ data, timeZone }: { data: LifeData; timeZone: str
     { label: 'Sleep duration', color: '#7186be', task: data.tasks.find((task) => task.task_type === 'daily' && task.coros_metadata?.metric === 'sleep_duration_minutes') },
   ];
   const cx = 480; const cy = 360; const innerRadius = 104; const ringWidth = 34; const ringGap = 5;
-  const startAngle = -Math.PI / 2; const segmentAngle = (Math.PI * 2) / daysInMonth; const gap = Math.min(.025, segmentAngle * .22);
+  const startAngle = -Math.PI / 2; const openArc = Math.PI * .28; const segmentAngle = ((Math.PI * 2) - openArc) / daysInMonth; const gap = Math.min(.025, segmentAngle * .22);
   const polar = (radius: number, angle: number) => ({ x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius });
   const sector = (dayIndex: number, ringIndex: number) => {
     const outer = innerRadius + (ringIndex + 1) * ringWidth + ringIndex * ringGap;
@@ -867,7 +867,7 @@ function MonthlyHabitTracker({ data, timeZone }: { data: LifeData; timeZone: str
         const future = date > todayKey;
         return <path key={`${habit.label}-${date}`} d={sector(dayIndex, habitIndex)} style={{ '--habit-color': habit.color } as React.CSSProperties} className={`monthly-segment ${completed ? 'checked' : ''} ${future ? 'future' : ''}`}><title>{`${habit.label} · ${date} · ${completed ? 'completed' : future ? 'upcoming' : 'not completed'}`}</title></path>;
       }))}
-      {tracked.map((habit, habitIndex) => { const outer = innerRadius + (habitIndex + 1) * ringWidth + habitIndex * ringGap; const inner = outer - ringWidth; const point = polar((outer + inner) / 2, -2.35); return <g key={habit.label} style={{ '--habit-color': habit.color } as React.CSSProperties}><line x1="205" y1={point.y} x2={point.x} y2={point.y} className="monthly-habit-leader"/><text x="46" y={point.y + 5} className="monthly-habit-label">{habit.label}</text></g>; })}
+      {tracked.map((habit, habitIndex) => { const outer = innerRadius + (habitIndex + 1) * ringWidth + habitIndex * ringGap; const inner = outer - ringWidth; const point = polar((outer + inner) / 2, -2); return <g key={habit.label} style={{ '--habit-color': habit.color } as React.CSSProperties}><line x1="205" y1={point.y} x2={point.x} y2={point.y} className="monthly-habit-leader"/><text x="46" y={point.y + 5} className="monthly-habit-label">{habit.label}</text></g>; })}
       {Array.from({ length: daysInMonth }, (_, dayIndex) => { const angle = startAngle + (dayIndex + .5) * segmentAngle; const position = polar(innerRadius + tracked.length * (ringWidth + ringGap) + 24, angle); return <text key={dayIndex} x={position.x} y={position.y} textAnchor="middle" dominantBaseline="middle" className="monthly-day-label">{dayIndex + 1}</text>; })}
       <text x={cx} y={cy - 10} textAnchor="middle" className="monthly-month-label">{selectedLabel}</text><text x={cx} y={cy + 15} textAnchor="middle" className="monthly-month-copy">{tracked.filter((habit) => habit.task).length} habits tracked</text>
     </svg></div></div>
