@@ -839,13 +839,13 @@ function MonthlyHabitTracker({ data, timeZone }: { data: LifeData; timeZone: str
     return { key: monthKey(date), label: new Intl.DateTimeFormat('en-IN', { month: 'long', year: 'numeric' }).format(date) };
   });
   const tracked = [
-    { label: 'Wake up', task: data.tasks.find((task) => task.task_type === 'daily' && task.title.toLowerCase().includes('wake up')) },
-    { label: '5 km walk', task: data.tasks.find((task) => task.task_type === 'daily' && task.coros_metadata?.metric === 'distance_km') },
-    { label: '10,000 steps', task: data.tasks.find((task) => task.task_type === 'daily' && task.coros_metadata?.metric === 'steps') },
-    { label: '1,000 skips', task: data.tasks.find((task) => task.task_type === 'daily' && task.coros_metadata?.metric === 'jump_count') },
-    { label: 'Sleep duration', task: data.tasks.find((task) => task.task_type === 'daily' && task.coros_metadata?.metric === 'sleep_duration_minutes') },
+    { label: 'Wake up', color: '#8a6e9c', task: data.tasks.find((task) => task.task_type === 'daily' && task.title.toLowerCase().includes('wake up')) },
+    { label: '5 km walk', color: '#60a7a2', task: data.tasks.find((task) => task.task_type === 'daily' && task.coros_metadata?.metric === 'distance_km') },
+    { label: '10,000 steps', color: '#d69a45', task: data.tasks.find((task) => task.task_type === 'daily' && task.coros_metadata?.metric === 'steps') },
+    { label: '1,000 skips', color: '#d77971', task: data.tasks.find((task) => task.task_type === 'daily' && task.coros_metadata?.metric === 'jump_count') },
+    { label: 'Sleep duration', color: '#7186be', task: data.tasks.find((task) => task.task_type === 'daily' && task.coros_metadata?.metric === 'sleep_duration_minutes') },
   ];
-  const cx = 360; const cy = 360; const innerRadius = 104; const ringWidth = 34; const ringGap = 5;
+  const cx = 480; const cy = 360; const innerRadius = 104; const ringWidth = 34; const ringGap = 5;
   const startAngle = -Math.PI / 2; const segmentAngle = (Math.PI * 2) / daysInMonth; const gap = Math.min(.025, segmentAngle * .22);
   const polar = (radius: number, angle: number) => ({ x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius });
   const sector = (dayIndex: number, ringIndex: number) => {
@@ -859,17 +859,18 @@ function MonthlyHabitTracker({ data, timeZone }: { data: LifeData; timeZone: str
   const todayKey = todayIn(timeZone);
   const selectedLabel = options.find((option) => option.key === selectedMonth)?.label;
   return <Card className="panel monthly-habit-panel"><div className="monthly-habit-head"><div><p className="eyebrow">Five essentials</p><h2>Monthly habit tracker</h2></div><label>Month<select value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)}>{options.map((option) => <option value={option.key} key={option.key}>{option.label}</option>)}</select></label></div><CardContent>
-    <div className="monthly-tracker-layout"><div className="monthly-chart-wrap"><svg viewBox="0 0 720 720" role="img" aria-label={`Monthly habit tracker for ${selectedLabel}`}>
+    <div className="monthly-tracker-layout"><div className="monthly-chart-wrap"><svg viewBox="0 0 840 720" role="img" aria-label={`Monthly habit tracker for ${selectedLabel}`}>
       <circle cx={cx} cy={cy} r={innerRadius - 13} className="monthly-tracker-core" />
       {tracked.map((habit, habitIndex) => Array.from({ length: daysInMonth }, (_, dayIndex) => {
         const date = monthDateKey(year, month, dayIndex + 1);
         const completed = Boolean(habit.task && data.completions.find((item) => item.task_id === habit.task!.id && item.completion_date === date && item.is_completed));
         const future = date > todayKey;
-        return <path key={`${habit.label}-${date}`} d={sector(dayIndex, habitIndex)} className={`monthly-segment ${completed ? 'checked' : ''} ${future ? 'future' : ''}`}><title>{`${habit.label} · ${date} · ${completed ? 'completed' : future ? 'upcoming' : 'not completed'}`}</title></path>;
+        return <path key={`${habit.label}-${date}`} d={sector(dayIndex, habitIndex)} style={{ '--habit-color': habit.color } as React.CSSProperties} className={`monthly-segment ${completed ? 'checked' : ''} ${future ? 'future' : ''}`}><title>{`${habit.label} · ${date} · ${completed ? 'completed' : future ? 'upcoming' : 'not completed'}`}</title></path>;
       }))}
+      {tracked.map((habit, habitIndex) => { const outer = innerRadius + (habitIndex + 1) * ringWidth + habitIndex * ringGap; const inner = outer - ringWidth; const point = polar((outer + inner) / 2, -2.35); return <g key={habit.label} style={{ '--habit-color': habit.color } as React.CSSProperties}><line x1="205" y1={point.y} x2={point.x} y2={point.y} className="monthly-habit-leader"/><text x="46" y={point.y + 5} className="monthly-habit-label">{habit.label}</text></g>; })}
       {Array.from({ length: daysInMonth }, (_, dayIndex) => { const angle = startAngle + (dayIndex + .5) * segmentAngle; const position = polar(innerRadius + tracked.length * (ringWidth + ringGap) + 24, angle); return <text key={dayIndex} x={position.x} y={position.y} textAnchor="middle" dominantBaseline="middle" className="monthly-day-label">{dayIndex + 1}</text>; })}
       <text x={cx} y={cy - 10} textAnchor="middle" className="monthly-month-label">{selectedLabel}</text><text x={cx} y={cy + 15} textAnchor="middle" className="monthly-month-copy">{tracked.filter((habit) => habit.task).length} habits tracked</text>
-    </svg></div><div className="monthly-habit-legend">{tracked.map((habit) => <div key={habit.label}><span /><strong>{habit.label}</strong>{!habit.task && <small>Task not found</small>}</div>)}</div></div>
+    </svg></div></div>
   </CardContent></Card>;
 }
 
