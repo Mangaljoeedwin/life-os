@@ -11,6 +11,10 @@ export interface Task {
   project_id: string | null;
   status: TaskStatus;
   priority: 'low' | 'normal' | 'high';
+  is_urgent: boolean | null;
+  is_important: boolean | null;
+  scheduled_for: string | null;
+  delegated_to: string | null;
   sort_order: number;
   due_date: string | null;
   coros_metadata: Record<string, unknown> | null;

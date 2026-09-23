@@ -15,7 +15,7 @@ export const demoProjects: Project[] = [
 ];
 
 const task = (id: string, title: string, taskType: Task['task_type'], area: Task['area'], order: number, projectId: string | null = null, coros: Record<string, unknown> | null = null): Task => ({
-  id, user_id: userId, title, task_type: taskType, area, project_id: projectId, status: 'open', priority: 'normal', sort_order: order, due_date: null, coros_metadata: coros, completed_at: null, created_at: now,
+  id, user_id: userId, title, task_type: taskType, area, project_id: projectId, status: 'open', priority: 'normal', is_urgent: null, is_important: null, scheduled_for: null, delegated_to: null, sort_order: order, due_date: null, coros_metadata: coros, completed_at: null, created_at: now,
 });
 
 export const makeDemoData = (): LifeData => ({

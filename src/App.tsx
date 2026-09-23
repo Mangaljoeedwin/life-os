@@ -16,6 +16,7 @@ import {
   Dumbbell,
   FolderKanban,
   FolderPlus,
+  Grid2X2,
   Flame,
   GripVertical,
   HeartPulse,
@@ -44,7 +45,7 @@ import { makeDemoData } from './demo';
 import { hasSupabaseConfig, supabase } from './supabase';
 import type { Area, CorosActivity, CorosDailyMetric, DailyCompletion, FocusSession, LifeData, Project, Task, TaskType, WeightEntry } from './types';
 
-type Tab = 'today' | 'health' | 'personal' | 'work' | 'projects' | 'focus' | 'body';
+type Tab = 'today' | 'health' | 'personal' | 'work' | 'projects' | 'matrix' | 'focus' | 'body';
 type TaskPriority = Task['priority'];
 type TaskDraft = {
   title: string;
@@ -53,6 +54,11 @@ type TaskDraft = {
   project_id: string | null;
   priority: TaskPriority;
   due_date: string | null;
+  status?: Task['status'];
+  is_urgent: boolean | null;
+  is_important: boolean | null;
+  scheduled_for: string | null;
+  delegated_to: string | null;
 };
 const tabs: { id: Tab; label: string; short: string; icon: typeof Home }[] = [
   { id: 'today', label: 'Today', short: 'Today', icon: Sparkles },
@@ -60,6 +66,7 @@ const tabs: { id: Tab; label: string; short: string; icon: typeof Home }[] = [
   { id: 'personal', label: 'Personal / Home', short: 'Home', icon: Home },
   { id: 'work', label: 'Work Life', short: 'Work', icon: BriefcaseBusiness },
   { id: 'projects', label: 'Other Big Projects', short: 'Projects', icon: FolderKanban },
+  { id: 'matrix', label: 'Eisenhower Matrix', short: 'Matrix', icon: Grid2X2 },
   { id: 'focus', label: 'Focus', short: 'Focus', icon: Clock3 },
   { id: 'body', label: 'Body Stats', short: 'Body', icon: Scale },
 ];
@@ -248,6 +255,7 @@ export function App() {
     const newTask: Task = {
       id: uid(), user_id: userId, title, task_type: taskType, area, project_id: projectId,
       status: 'open', priority, sort_order: data.tasks.length + 1, due_date: dueDate, coros_metadata: null,
+      is_urgent: null, is_important: null, scheduled_for: null, delegated_to: null,
       completed_at: null, created_at: new Date().toISOString(),
     };
     setData((current) => ({ ...current, tasks: [...current.tasks, newTask] }));
@@ -479,6 +487,7 @@ export function App() {
         {tab === 'personal' && <AreaView title="Personal / Home" description="The life-admin details that keep home running smoothly." area="personal" icon={Home} {...shared} />}
         {tab === 'work' && <AreaView title="Work Life" description="Keep the next career move visible and achievable." area="work" icon={BriefcaseBusiness} {...shared} />}
         {tab === 'projects' && <ProjectsView {...shared} />}
+        {tab === 'matrix' && <EisenhowerView {...shared} />}
         {tab === 'focus' && <FocusView {...shared} />}
         {tab === 'body' && <BodyView {...shared} />}
       </main>
@@ -743,6 +752,8 @@ function TaskList({ tasks, data, day, onToggle, projects, onUpdate, onDelete, on
           {project && <span>{project.name}</span>}
           {task.priority !== 'normal' && <span className={`priority-tag ${task.priority}`}>{task.priority} priority</span>}
           {task.due_date && <span className={`due-tag ${overdue ? 'overdue' : ''}`}><CalendarDays /> {task.due_date === day ? 'Due today' : task.due_date}</span>}
+          {task.scheduled_for && <span className="due-tag"><CalendarDays /> Scheduled {task.scheduled_for}</span>}
+          {task.delegated_to && <span>Waiting on {task.delegated_to}</span>}
           {synced && <span className={`sync-tag ${completion?.source === 'coros' ? 'verified' : ''}`}><RefreshCw /> {completion?.source === 'coros' ? 'COROS verified' : progress}</span>}
         </div></div>
         <div className="task-row-actions">
@@ -764,6 +775,10 @@ function TaskEditor({ task, projects, onClose, onSave, onDelete }: { task: Task;
   const [destination, setDestination] = useState(task.project_id ? `project:${task.project_id}` : `area:${task.area}`);
   const [priority, setPriority] = useState<TaskPriority>(task.priority);
   const [dueDate, setDueDate] = useState(task.due_date ?? '');
+  const [urgent, setUrgent] = useState(task.is_urgent == null ? '' : String(task.is_urgent));
+  const [important, setImportant] = useState(task.is_important == null ? '' : String(task.is_important));
+  const [scheduledFor, setScheduledFor] = useState(task.scheduled_for ?? '');
+  const [delegatedTo, setDelegatedTo] = useState(task.delegated_to ?? '');
   const [saving, setSaving] = useState(false);
   const isProject = destination.startsWith('project:');
   const isCoros = Boolean(task.coros_metadata);
@@ -774,7 +789,7 @@ function TaskEditor({ task, projects, onClose, onSave, onDelete }: { task: Task;
       setSaving(true);
       const projectId = isProject ? destination.slice('project:'.length) : null;
       const area = isProject ? 'projects' : destination.slice('area:'.length) as Area;
-      await onSave({ title: title.trim(), task_type: isProject ? 'project_subtask' : isCoros ? 'daily' : behavior, area, project_id: projectId, priority, due_date: dueDate || null });
+      await onSave({ title: title.trim(), task_type: isProject ? 'project_subtask' : isCoros ? 'daily' : behavior, area, project_id: projectId, priority, due_date: dueDate || null, is_urgent: urgent === '' ? null : urgent === 'true', is_important: important === '' ? null : important === 'true', scheduled_for: urgent === 'false' && important === 'true' ? scheduledFor : null, delegated_to: urgent === 'true' && important === 'false' ? delegatedTo.trim() || null : null });
       setSaving(false);
     }}>
       <div className="dialog-head"><div><p className="eyebrow">Task controls</p><h2 id={`edit-${task.id}`}>Edit commitment</h2></div><Button type="button" variant="ghost" size="icon" onClick={onClose}><X /></Button></div>
@@ -787,6 +802,12 @@ function TaskEditor({ task, projects, onClose, onSave, onDelete }: { task: Task;
         <label>Behavior<select value={isProject ? 'project_subtask' : behavior} disabled={isProject || isCoros} onChange={(event) => setBehavior(event.target.value as TaskType)}><option value="daily">Daily To Do</option><option value="one_time">One-time</option>{isProject && <option value="project_subtask">Project task</option>}</select></label>
         <label>Priority<select value={priority} onChange={(event) => setPriority(event.target.value as TaskPriority)}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option></select></label>
         <label>Due date<Input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
+        {task.task_type !== 'daily' && <>
+          <label>Urgency<select value={urgent} onChange={(event) => setUrgent(event.target.value)}><option value="">Not classified</option><option value="true">Urgent</option><option value="false">Not urgent</option></select></label>
+          <label>Importance<select value={important} onChange={(event) => setImportant(event.target.value)}><option value="">Not classified</option><option value="true">Important</option><option value="false">Not important</option></select></label>
+          {important === 'true' && urgent === 'false' && <label>Schedule for<Input type="date" value={scheduledFor} onChange={(event) => setScheduledFor(event.target.value)} required /></label>}
+          {important === 'false' && urgent === 'true' && <label>Waiting on (optional)<Input value={delegatedTo} maxLength={120} onChange={(event) => setDelegatedTo(event.target.value)} placeholder="Person or team" /></label>}
+        </>}
       </div>
       {isCoros && <p className="dialog-note">This is a COROS-linked daily task. Its health rule will stay connected when you rename or move it.</p>}
       <div className="dialog-actions"><Button type="button" variant="ghost" className="danger-button" onClick={() => void onDelete()}><Trash2 /> Delete</Button><span /><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</Button></div>
@@ -949,6 +970,33 @@ function ProjectsView(props: ViewProps) {
     {adding && <ProjectEditor title="Create a project" onClose={() => setAdding(false)} onSave={async (name, description) => { await props.addProject(name, description); setAdding(false); }} />}
     {active.length ? <div className="project-grid">{active.map((project, index) => <ProjectCard key={project.id} project={project} index={index} {...props} />)}</div> : <Card className="panel"><CardContent><div className="empty-state"><FolderKanban /><p>No active projects yet. Create one when something needs more than a single task.</p></div></CardContent></Card>}
     {archived.length > 0 && <Card className="panel archived-projects"><SectionHead title="Archived projects" detail={`${archived.length} saved`} /><CardContent>{archived.map((project) => <div className="archived-project-row" key={project.id}><div><strong>{project.name}</strong><small>{project.completed_at ? 'Completed project' : 'Archived project'}</small></div><Button variant="ghost" onClick={() => void props.updateProject(project.id, { archived_at: null })}><Undo2 /> Restore</Button></div>)}</CardContent></Card>}
+  </>;
+}
+
+function EisenhowerView(props: ViewProps) {
+  const tasks = props.data.tasks.filter((task) => task.task_type !== 'daily' && task.status !== 'completed');
+  const active = tasks.filter((task) => task.status === 'open');
+  const archived = props.data.tasks.filter((task) => task.task_type !== 'daily' && task.status === 'archived');
+  const unclassified = active.filter((task) => task.is_urgent == null || task.is_important == null);
+  const quadrants = [
+    { title: 'Do first', subtitle: 'Urgent and important', className: 'matrix-do', items: active.filter((task) => task.is_urgent === true && task.is_important === true) },
+    { title: 'Schedule', subtitle: 'Important, not urgent', className: 'matrix-schedule', items: active.filter((task) => task.is_urgent === false && task.is_important === true) },
+    { title: 'Delegate', subtitle: 'Urgent, not important · waiting on someone', className: 'matrix-delegate', items: active.filter((task) => task.is_urgent === true && task.is_important === false) },
+    { title: 'Eliminate', subtitle: 'Neither urgent nor important · archive if you’re sure', className: 'matrix-eliminate', items: active.filter((task) => task.is_urgent === false && task.is_important === false) },
+  ];
+  const listProps = (items: Task[]) => ({ tasks: items, data: props.data, day: props.day, onToggle: props.toggleTask, projects: props.data.projects, onUpdate: props.updateTask, onDelete: props.deleteTask });
+  return <>
+    <PageIntro eyebrow="Choose what deserves attention" title="Eisenhower Matrix" copy="Sort one-time and project tasks by urgency and importance. Daily commitments stay in your To Do list." />
+    {unclassified.length > 0 && <Card className="panel matrix-unclassified"><SectionHead title="Needs a decision" detail={`${unclassified.length} to classify`} /><CardContent><p>Open a task’s menu to set whether it is urgent and important.</p><TaskList {...listProps(unclassified)} compact /></CardContent></Card>}
+    <div className="matrix-grid">{quadrants.map((quadrant) => <Card className={`panel matrix-quadrant ${quadrant.className}`} key={quadrant.title}>
+      <SectionHead title={quadrant.title} detail={`${quadrant.items.length}`} />
+      <CardContent>
+        <p className="matrix-subtitle">{quadrant.subtitle}</p>
+        <TaskList {...listProps(quadrant.items)} compact empty="No tasks here." />
+        {quadrant.title === 'Eliminate' && quadrant.items.length > 0 && <div className="matrix-archive-actions">{quadrant.items.map((task) => <Button key={task.id} variant="ghost" onClick={() => { if (window.confirm(`Archive “${task.title}”? You can restore it later.`)) void props.updateTask(task.id, { status: 'archived' }); }}><Archive /> Archive “{task.title}”</Button>)}</div>}
+      </CardContent>
+    </Card>)}</div>
+    {archived.length > 0 && <Card className="panel matrix-archive"><SectionHead title="Archived · recoverable" detail={`${archived.length} saved`} /><CardContent><div className="archived-project-list">{archived.map((task) => <div className="archived-project-row" key={task.id}><div><strong>{task.title}</strong><small>{task.task_type === 'project_subtask' ? 'Project task' : 'One-time task'}</small></div><Button variant="ghost" onClick={() => void props.updateTask(task.id, { status: 'open' })}><Undo2 /> Restore</Button></div>)}</div></CardContent></Card>}
   </>;
 }
 
