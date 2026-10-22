@@ -1122,10 +1122,32 @@ function latestWeight(data: LifeData) { return [...data.weights].sort((a, b) => 
 function bmiFor(data: LifeData) { const weight = latestWeight(data)?.weight_kg; return weight ? weight / ((data.settings.height_cm / 100) ** 2) : null; }
 function bmiCategory(bmi: number | null) { if (!bmi) return 'Need weight'; if (bmi < 18.5) return 'Underweight'; if (bmi < 25) return 'Normal'; if (bmi < 30) return 'Overweight'; return 'Obesity'; }
 
+const inBodySnapshot = { date: '19 Oct 2026', bodyFatPercent: 29.8, bodyFatMassKg: 29.6, skeletalMuscleMassKg: 40.1 };
+
 function BodyMiniCard({ data, onSave }: { data: LifeData; onSave: (weight: number) => Promise<void> }) {
   const [value, setValue] = useState('');
   const bmi = bmiFor(data);
-  return <Card className="panel body-mini"><SectionHead title="Body Stats" detail="Manual entry" /><CardContent><div className="body-stat-row"><div><span>Current weight</span><strong>{latestWeight(data)?.weight_kg ?? '—'} <small>kg</small></strong></div><div title="BMI compares weight with height. Adult ranges: underweight below 18.5, normal 18.5–24.9, overweight 25–29.9, obesity 30+."><span>BMI ⓘ</span><strong>{bmi?.toFixed(1) ?? '—'} <small>{bmiCategory(bmi)}</small></strong></div></div><form className="weight-entry" onSubmit={(event) => { event.preventDefault(); const parsed = Number(value); if (parsed > 0) { void onSave(parsed); setValue(''); } }}><Input inputMode="decimal" type="number" min="30" max="300" step="0.1" value={value} onChange={(event) => setValue(event.target.value)} placeholder="Enter today’s weight" /><Button type="submit" className="primary-button">Save</Button></form></CardContent></Card>;
+  return (
+    <Card className="panel body-mini">
+      <SectionHead title="Body Stats" detail="Manual weight" />
+      <CardContent>
+        <div className="body-stat-row">
+          <div><span>Current weight</span><strong>{latestWeight(data)?.weight_kg ?? '—'} <small>kg</small></strong></div>
+          <div title="BMI compares weight with height. Adult ranges: underweight below 18.5, normal 18.5–24.9, overweight 25–29.9, obesity 30+."><span>BMI ⓘ</span><strong>{bmi?.toFixed(1) ?? '—'} <small>{bmiCategory(bmi)}</small></strong></div>
+        </div>
+        <div className="body-comp-row" aria-label={`InBody composition from ${inBodySnapshot.date}`}>
+          <div><span>Body fat</span><strong>{inBodySnapshot.bodyFatPercent.toFixed(1)}<small>%</small></strong></div>
+          <div><span>Fat mass</span><strong>{inBodySnapshot.bodyFatMassKg.toFixed(1)}<small>kg</small></strong></div>
+          <div><span>Skeletal muscle</span><strong>{inBodySnapshot.skeletalMuscleMassKg.toFixed(1)}<small>kg</small></strong></div>
+        </div>
+        <p className="body-scan-note">InBody scan · {inBodySnapshot.date}</p>
+        <form className="weight-entry" onSubmit={(event) => { event.preventDefault(); const parsed = Number(value); if (parsed > 0) { void onSave(parsed); setValue(''); } }}>
+          <Input inputMode="decimal" type="number" min="30" max="300" step="0.1" value={value} onChange={(event) => setValue(event.target.value)} placeholder="Enter today’s weight" />
+          <Button type="submit" className="primary-button">Save</Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
 }
 
 function BodyView(props: ViewProps) {
